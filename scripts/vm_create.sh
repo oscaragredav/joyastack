@@ -40,7 +40,7 @@ NUM_IFACES=$8
 IMAGE_DIR="/home/ubuntu/images"
 BASE_IMAGE="${IMAGE_DIR}/cirros-0.6.2-x86_64-disk.img"
 VM_IMG="/home/ubuntu/joyastack/var/vms/${VM_NAME}.qcow2"
-TAP_INTERFACE="${OVS_NAME}-${VM_NAME}-tap"
+TAP_INTERFACE="tap-${VM_NAME}"
 MAC_ADDRESS="52:54:00:$(openssl rand -hex 3 | sed 's/\(..\)/\1:/g; s/:$//')"
 
 log "=== Creando VM: $VM_NAME ==="
