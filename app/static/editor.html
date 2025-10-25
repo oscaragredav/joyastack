@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head><title>Joyastack Slice Editor</title></head>
+<body>
+  <h2>Crear Slice</h2>
+  <textarea id="jsonInput" rows="12" cols="80" placeholder="Pega aquí el JSON exportado..."></textarea><br>
+  <button id="createBtn">Guardar Slice</button>
+  <button id="deployBtn">Desplegar Slice</button>
+  <p id="status"></p>
+
+  <script>
+  let currentSliceId = null;
+
+  document.getElementById("createBtn").onclick = async () => {
+    const jsonData = JSON.parse(document.getElementById("jsonInput").value);
+    const res = await fetch("/slices/create", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ name: "SliceWeb", nodes: jsonData.nodes })
+    });
+    const data = await res.json();
+    currentSliceId = data.slice_id;
+    document.getElementById("status").innerText = data.message;
+  };
+
+  document.getElementById("deployBtn").onclick = async () => {
+    if (!currentSliceId) return alert("Primero guarda el slice");
+    const res = await fetch(`/slices/deploy/${currentSliceId}`, { method: "POST" });
+    const data = await res.json();
+    document.getElementById("status").innerText = "Despliegue completado: " + JSON.stringify(data.result);
+  };
+  </script>
+</body>
+</html>
