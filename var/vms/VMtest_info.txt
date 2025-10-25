@@ -1,0 +1,12 @@
+VM_NAME=VMtest
+PID=104246
+TAP_INTERFACE=tap-VMtest
+VLAN_ID=0
+VNC_PORT=1
+MAC_ADDRESS=52:54:00:f5:f8:d6
+OVS_NAME=br-int
+RAM=256
+CPUS=1
+DISK=2
+CREATED=2025-10-24 21:57:29
+IMAGE=/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img
