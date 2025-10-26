@@ -1,5 +1,5 @@
 from core.db_config import SessionLocal
-from core.models import Slice, VM
+from core.models import Slice, VM, Image
 from drivers.linux_drivers import create_vm
 from sqlalchemy import func
 
@@ -44,8 +44,23 @@ def deploy_slice(slice_id: int):
             # Calculamos el puerto VNC basado en el ID del slice y la VM
             base_vnc = (worker_id * 10000) + (slice_id % 100 * 100) + (vm.id % 100)
             vnc_port = base_vnc
+
+            # Obtener la ruta de la imagen desde la base de datos
+            image = db.get(Image, vm.image_id)
+            image_path = image.path if image else "/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img"
+
+            res = create_vm(
+                worker_ip, 
+                vm.name, 
+                "br-int", 
+                0, 
+                vnc_port, 
+                vm.cpu, 
+                vm.ram, 
+                vm.disk,
+                1,
+                image_path=image_path)
             
-            res = create_vm(worker_ip, vm.name, "br-int", 0, vnc_port, vm.cpu, vm.ram, vm.disk)
             print(f"[DeploymentManager] Resultado de create_vm para {vm.name}: {res}")
             
             vm.state = "DESPLEGADO" if res["success"] else "ERROR"

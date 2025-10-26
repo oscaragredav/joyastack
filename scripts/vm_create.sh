@@ -25,7 +25,7 @@ log() { echo "[$(date +'%H:%M:%S')] $*"; }
 error_exit() { log "ERROR: $*"; exit 1; }
 
 if [ $# -ne 8 ]; then
-  error_exit "Uso: $0 <NombreVM> <OvS> <VLAN> <VNC_PORT> <CPUs> <RAM_MB> <DISK_GB> <NUM_IFACES>"
+  error_exit "Uso: $0 <NombreVM> <OvS> <VLAN> <VNC_PORT> <CPUs> <RAM_MB> <DISK_GB> <NUM_IFACES> <IMAGE_PATH>"
 fi
 
 VM_NAME=$1
@@ -36,9 +36,10 @@ CPUS=$5
 RAM=$6
 DISK=$7
 NUM_IFACES=$8
+IMAGE_PATH=$9
 
 IMAGE_DIR="/home/ubuntu/images"
-BASE_IMAGE="${IMAGE_DIR}/cirros-0.6.2-x86_64-disk.img"
+BASE_IMAGE="$IMAGE_PATH"
 VM_IMG="/home/ubuntu/joyastack/var/vms/${VM_NAME}.qcow2"
 TAP_INTERFACE="tap-${VM_NAME}"
 MAC_ADDRESS="52:54:00:$(openssl rand -hex 3 | sed 's/\(..\)/\1:/g; s/:$//')"

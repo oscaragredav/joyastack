@@ -46,6 +46,6 @@ class Image(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     path = Column(String(255), nullable=False)
-    has = Column(String(64), nullable=True)
+    hash = Column(String(64), nullable=True)
     size = Column(Integer, nullable=True)
     reference_count = Column(Integer, default=0)

@@ -1,34 +1,32 @@
 <!DOCTYPE html>
-<html>
-<head><title>Joyastack Slice Editor</title></head>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Joyastack - Editor de Slice</title>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <style>
+    body { font-family: Arial; margin: 20px; }
+    #network { width: 100%; height: 500px; border: 1px solid #ccc; margin-top: 10px; }
+    #controls { margin-bottom: 10px; }
+    button { margin-right: 5px; }
+    input, select { margin: 5px; }
+  </style>
+</head>
 <body>
-  <h2>Crear Slice</h2>
-  <textarea id="jsonInput" rows="12" cols="80" placeholder="Pega aquí el JSON exportado..."></textarea><br>
-  <button id="createBtn">Guardar Slice</button>
-  <button id="deployBtn">Desplegar Slice</button>
-  <p id="status"></p>
+  <h2>Editor de Topología - Joyastack</h2>
 
-  <script>
-  let currentSliceId = null;
+  <div id="controls">
+    <button onclick="addVM()">Agregar VM</button>
+    <button onclick="connectVMs()">Conectar</button>
+    <button onclick="deleteVM()">Eliminar VM</button>
+    <button onclick="clearAll()">Limpiar Todo</button>
+    <button onclick="saveSlice()">Guardar Slice</button>
+    <button onclick="deploySlice()">Desplegar Slice</button>
+  </div>
 
-  document.getElementById("createBtn").onclick = async () => {
-    const jsonData = JSON.parse(document.getElementById("jsonInput").value);
-    const res = await fetch("/slices/create", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ name: "SliceWeb", nodes: jsonData.nodes })
-    });
-    const data = await res.json();
-    currentSliceId = data.slice_id;
-    document.getElementById("status").innerText = data.message;
-  };
+  <div id="network"></div>
 
-  document.getElementById("deployBtn").onclick = async () => {
-    if (!currentSliceId) return alert("Primero guarda el slice");
-    const res = await fetch(`/slices/deploy/${currentSliceId}`, { method: "POST" });
-    const data = await res.json();
-    document.getElementById("status").innerText = "Despliegue completado: " + JSON.stringify(data.result);
-  };
-  </script>
+  <script src="/static/js/topology_editor.js"></script>
 </body>
 </html>

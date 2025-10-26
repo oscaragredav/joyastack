@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Request
 from sqlalchemy.orm import Session
 from core.db_config import SessionLocal
-from core.models import Slice, VM
+from core.models import Slice, VM, Image
 
 router = APIRouter()
+
+@router.get("/images")
+def list_images():
+    """Devuelve las imágenes disponibles en la BD"""
+    db: Session = SessionLocal()
+    images = db.query(Image).all()
+    return [{"id": img.id, "name": img.name, "path": img.path} for img in images]
 
 @router.post("/slices/create")
 async def create_slice(request: Request):
