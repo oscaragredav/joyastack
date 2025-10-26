@@ -13,7 +13,7 @@ async def create_slice(request: Request):
 
     db: Session = SessionLocal()
     try:
-        slice_obj = Slice(name=name, owner_id=1, status="PENDIENTE")
+        slice_obj = Slice(name=name, owner_id=1, status="PENDIENTE") #actualizar owner_id despues
         db.add(slice_obj)
         db.commit()
         db.refresh(slice_obj)
