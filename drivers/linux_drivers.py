@@ -21,12 +21,19 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         print(f"[LinuxDriver] STDOUT:\n{stdout}")
         if stderr:
             print(f"[LinuxDriver] STDERR:\n{stderr}")
+            
+        # Obtener el PID de la VM recién creada
+        pid_cmd = f"pgrep -f '^qemu-system-x86_64.*-name {vm_name} '"
+        pid_stdout, pid_stderr = conn.exec_sudo(pid_cmd)
+        vm_pid = int(pid_stdout.strip()) if pid_stdout.strip() else None
+        
         return {
             "worker_ip": worker_ip,
             "vm_name": vm_name,
             "stdout": stdout.strip(),
             "stderr": stderr.strip(),
-            "success": success
+            "success": success,
+            "pid": vm_pid
         }
     finally:
         conn.close()
