@@ -23,9 +23,12 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
             print(f"[LinuxDriver] STDERR:\n{stderr}")
             
         # Obtener el PID de la VM recién creada
-        pid_cmd = f"pgrep -f '^qemu-system-x86_64.*-name {vm_name} '"
+        pid_cmd = f"ps aux | grep '[q]emu-system-x86_64.*-name {vm_name} ' | awk '{{print $2}}'"
         pid_stdout, pid_stderr = conn.exec_sudo(pid_cmd)
         vm_pid = int(pid_stdout.strip()) if pid_stdout.strip() else None
+        print(f"[LinuxDriver] PID command: {pid_cmd}")
+        print(f"[LinuxDriver] PID stdout: {pid_stdout}")
+        print(f"[LinuxDriver] PID found: {vm_pid}")
         
         return {
             "worker_ip": worker_ip,

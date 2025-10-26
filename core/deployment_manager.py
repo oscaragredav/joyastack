@@ -40,9 +40,26 @@ def deploy_slice(slice_id: int):
 
         for i, vm in enumerate(vms):
             worker_ip = worker_ips[i % len(worker_ips)]
-            res = create_vm(worker_ip, vm.name, "br-int", 0, 10 + i, vm.cpu, vm.ram, vm.disk)
+            worker_id = i % len(worker_ips) + 1
+            # Calculamos el puerto VNC basado en el ID del slice y la VM
+            base_vnc = (worker_id * 10000) + (slice_id % 100 * 100) + (vm.id % 100)
+            vnc_port = base_vnc
+            
+            res = create_vm(worker_ip, vm.name, "br-int", 0, vnc_port, vm.cpu, vm.ram, vm.disk)
+            print(f"[DeploymentManager] Resultado de create_vm para {vm.name}: {res}")
+            
             vm.state = "DESPLEGADO" if res["success"] else "ERROR"
-            vm.worker_id = i % len(worker_ips) + 1
+            vm.worker_id = worker_id
+            
+            if res["success"] and "pid" in res:
+                print(f"[DeploymentManager] Guardando PID {res['pid']} para VM {vm.name}")
+                vm.pid = res["pid"]
+                db.add(vm)
+                db.flush()
+            else:
+                print(f"[DeploymentManager] No se pudo obtener PID para VM {vm.name}")
+                print(f"[DeploymentManager] Success: {res['success']}, PID en resultado: {'pid' in res}")
+            
             results.append(res)
 
         slice_obj.status = "DESPLEGADO"
