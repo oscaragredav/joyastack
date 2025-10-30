@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from hashlib import sha256
 import os
-from database import get_db
-from ssh_utils import SSHConnection
+from utils.database import get_db
+from utils.ssh import SSHConnection
 from sqlalchemy import text
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware

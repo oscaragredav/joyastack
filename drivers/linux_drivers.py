@@ -1,4 +1,5 @@
-from utils.ssh_utils import SSHConnection
+from utils.ssh import SSHConnection
+
 
 def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
               vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
@@ -44,7 +45,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
             }
 
         success = "creada" in stdout.lower() or "vm" in stdout.lower()
-            
+
         # Obtener el PID de la VM recién creada solo si fue exitosa
         vm_pid = None
         if success:
@@ -54,7 +55,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
             print(f"[LinuxDriver] PID command: {pid_cmd}")
             print(f"[LinuxDriver] PID stdout: {pid_stdout}")
             print(f"[LinuxDriver] PID found: {vm_pid}")
-        
+
         return {
             "worker_ip": worker_ip,
             "vm_name": vm_name,
