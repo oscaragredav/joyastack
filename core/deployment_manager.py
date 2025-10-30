@@ -19,7 +19,7 @@ def generate_unique_name(db, model, base_name: str) -> str:
     return f"{base_name}-{count}"
 
 
-def deployment_slice(slice_id: int, db: Session):
+def deploy_slice(slice_id: int, db: Session):
     """
     Ahora recibe db como parámetro en lugar de crear SessionLocal()
     """

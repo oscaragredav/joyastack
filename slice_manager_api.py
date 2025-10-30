@@ -13,7 +13,7 @@ from utils.ssh import SSHConnection
 from sqlalchemy import text
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from core.deployment_manager import deployment_slice
+from core.deployment_manager import deploy_slice
 
 load_dotenv()
 
@@ -173,7 +173,7 @@ async def create_slice(
 # POST: Desplegar un slice
 # ----------------------------------------------------
 @app.post("/slices/deploy/{slice_id}")
-async def deploy_slice(
+async def validate_deploy_slice(
         slice_id: int,
         payload: dict = Depends(verify_token),
         db: Session = Depends(get_db)
@@ -210,7 +210,7 @@ async def deploy_slice(
 
     try:
         # Llamar a la función de despliegue
-        result = deployment_slice(slice_id, db)
+        result = deploy_slice(slice_id, db)
 
         return {
             "slice_id": slice_id,
