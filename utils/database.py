@@ -3,24 +3,17 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
+from config.settings import DB_URL
+
 load_dotenv()
 # =======================================================
-# CONFIGURACIÓN DE CONEXIÓN A MYSQL (AWS RDS)
+# CONFIGURACIÓN DE CONEXIÓN A MYSQL
 # =======================================================
 
-DB_USER = os.getenv("MYSQL_USER")
-DB_PASSWORD = os.getenv("MYSQL_PASSWORD")
-DB_HOST = os.getenv("MYSQL_HOST")
-DB_PORT = "3306"
-DB_NAME = os.getenv("MYSQL_DB")
 
-# Construimos la URL de conexión compatible con SQLAlchemy + PyMySQL
-DATABASE_URL = (
-    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
 
 # Creamos el engine con pre_ping=True para reconexiones automáticas
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(DB_URL, pool_pre_ping=True)
 
 # Session local para manejar transacciones y conexiones
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

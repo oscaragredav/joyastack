@@ -1,10 +1,13 @@
 import json
+from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from hashlib import sha256
 import os
+
+from config.settings import WORKER_IPS, GATEWAY, SSH_USER, SSH_PASS
 from utils.database import get_db
 from utils.ssh import SSHConnection
 from sqlalchemy import text
@@ -25,6 +28,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+def log_entry(db, module, level, message):
+    db.execute(
+        text("""
+            INSERT INTO logs (module, timestamp, level, message)
+            VALUES (:m, :ts, :lvl, :msg)
+        """),
+        {
+            "m": module,
+            "ts": datetime.utcnow(),
+            "lvl": level,
+            "msg": message,
+        },
+    )
+    db.commit()
 
 
 # ----------------------------------------------------
@@ -205,6 +223,77 @@ async def deploy_slice(
             status_code=500,
             detail=f"Error al desplegar slice: {str(e)}"
         )
+
+# =====================================================================
+# DELETE /slices/{slice_id}  → eliminar slice completo
+# =====================================================================
+@app.delete("/slices/{slice_id}")
+def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depends(get_db)):
+    """
+    Borra un slice completo:
+    - Elimina las VMs asociadas (vía SSH).
+    - Limpia OvS, interfaces TAP, y entradas de BD.
+    - Registra logs del proceso.
+    """
+    try:
+        # Obtener VMs del slice
+        vms = db.execute(
+            text("""
+                SELECT v.id, v.cpu, v.ram, v.disk, w.ip as worker_ip, w.id as worker_id
+                FROM vm v
+                JOIN worker w ON v.worker_id = w.id
+                WHERE v.slice_id = :sid
+            """),
+            {"sid": slice_id},
+        ).mappings().all()
+
+        if not vms:
+            return {"status": "not_found", "message": "No hay VMs en este slice"}
+
+        log_entry(db, "SliceManager", "INFO", f"Eliminando slice {slice_id} con {len(vms)} VMs")
+
+        for vm in vms:
+            wip = vm["worker_ip"]
+            ssh_port = None
+            for name, data in WORKER_IPS.items():
+                if data["ip"] == wip:
+                    ssh_port = data["ssh_port"]
+                    break
+            if not ssh_port:
+                continue
+
+            conn = SSHConnection(GATEWAY, ssh_port, SSH_USER, SSH_PASS)
+            if conn.connect():
+                try:
+                    # Matar proceso QEMU si existiese
+                    conn.exec_sudo(f"pkill -f 'qemu-system.*VM_Auto_' || true")
+                    conn.exec_sudo(f"sleep 1")
+                    # Limpiar TAPs y OvS
+                    conn.exec_sudo(f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
+                    conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
+                    log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
+                except Exception as e:
+                    log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}")
+                finally:
+                    conn.close()
+
+        # Borrar en la base de datos (orden correcto debido a FKs)
+        db.execute(text("DELETE FROM network_link WHERE slice_id = :sid"), {"sid": slice_id})
+        db.execute(text("DELETE FROM vm WHERE slice_id = :sid"), {"sid": slice_id})
+        db.execute(text("DELETE FROM slice_has_topology WHERE slice_id = :sid"), {"sid": slice_id})
+        db.execute(text("DELETE FROM logs WHERE module in ('WorkManager','SliceManager') AND message LIKE :sid_match"),
+                   {"sid_match": f"%{slice_id}%"})
+        db.execute(text("DELETE FROM slice WHERE id = :sid"), {"sid": slice_id})
+        db.commit()
+
+        log_entry(db, "SliceManager", "INFO", f"Slice {slice_id} eliminado correctamente")
+        return {"status": "deleted", "slice_id": slice_id}
+
+    except Exception as e:
+        db.rollback()
+        log_entry(db, "SliceManager", "ERROR", f"Error eliminando slice: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ----------------------------------------------------
 # GET: todos los flavor
