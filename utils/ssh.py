@@ -6,6 +6,7 @@ class SSHConnection:
         self.host = host
         self.user = user
         self.port = port
+        self.password = password
         self.timeout = timeout
         self.client = None
 

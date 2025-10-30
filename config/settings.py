@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,9 +13,7 @@ DB_NAME = os.getenv("MYSQL_DB", "joyastack")
 
 DB_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-
-
-# --- Otros parámetros globales ---
+# --- Otros parámetros globales para añadir al .env ---
 WORKER_IPS = ["10.0.10.2", "10.0.10.3", "10.0.10.4"]
 SSH_USER = "ubuntu"
 GATEWAY = "10.20.12.154"

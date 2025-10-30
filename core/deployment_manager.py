@@ -1,6 +1,8 @@
 from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+
+from config.settings import WORKER_IPS
 from drivers.linux_drivers import create_vm
 
 
@@ -63,7 +65,7 @@ def deployment_slice(slice_id: int, db: Session):
         db.commit()
 
         results = []
-        worker_ips = ["10.0.10.2", "10.0.10.3", "10.0.10.4"]
+        worker_ips = WORKER_IPS
 
         for i, vm in enumerate(vms):
             worker_ip = worker_ips[i % len(worker_ips)]

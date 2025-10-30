@@ -29,6 +29,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 def log_entry(db, module, level, message):
     db.execute(
         text("""
@@ -110,7 +111,6 @@ async def create_slice(
         "nodes": nodes,
         "links": links
     }
-
 
     # Obtener usuario desde el token
     username = payload["sub"]
@@ -224,10 +224,11 @@ async def deploy_slice(
             detail=f"Error al desplegar slice: {str(e)}"
         )
 
+
 # =====================================================================
 # DELETE /slices/{slice_id}  → eliminar slice completo
 # =====================================================================
-@app.delete("/slices/{slice_id}")
+@app.delete("/slices/delete/{slice_id}")
 def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depends(get_db)):
     """
     Borra un slice completo:
@@ -269,7 +270,8 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
                     conn.exec_sudo(f"pkill -f 'qemu-system.*VM_Auto_' || true")
                     conn.exec_sudo(f"sleep 1")
                     # Limpiar TAPs y OvS
-                    conn.exec_sudo(f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
+                    conn.exec_sudo(
+                        f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
                     conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
                     log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
                 except Exception as e:
@@ -303,6 +305,7 @@ def get_templates(payload: dict = Depends(verify_token), db: Session = Depends(g
     result = db.execute(text("SELECT * FROM flavor")).mappings().all()
     return {"templates": [dict(r) for r in result]}
 
+
 # ----------------------------------------------------
 # GET: todos las imagenes
 # ----------------------------------------------------
@@ -317,9 +320,9 @@ def get_images(payload: dict = Depends(verify_token), db: Session = Depends(get_
 # ============================================================
 @app.post("/images/upload")
 def upload_image(
-    file: UploadFile = File(...),
-    token_data: dict = Depends(verify_token),
-    db: Session = Depends(get_db),
+        file: UploadFile = File(...),
+        token_data: dict = Depends(verify_token),
+        db: Session = Depends(get_db),
 ):
     """
     Sube una imagen a HeadNode vía SSH, la registra en la base de datos
