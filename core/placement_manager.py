@@ -4,7 +4,7 @@ from typing import List, Dict
 # Este código define una API REST con FastAPI que expone un endpoint /placement,
 # el cual ejecuta un algoritmo de colocación de máquinas virtuales (VMs) en hosts físicos,
 # usando una versión multidimensional del algoritmo Bin Packing con balanceo de carga
-# y overcommit.
+# y overcommit. Basado en el enfoque First Fit Decreasing (FFD)
 #
 
 app = FastAPI(title="Bin Packing API", version="1.0")
