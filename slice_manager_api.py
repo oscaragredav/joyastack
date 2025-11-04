@@ -224,6 +224,108 @@ async def validate_deploy_slice(
             detail=f"Error al desplegar slice: {str(e)}"
         )
 
+# =====================================================================
+# UPDATE /slices/{slice_id}  → modificar slice
+# =====================================================================
+
+
+@app.post("/slices/update/{slice_id}")
+async def update_slice(
+    slice_id: int,
+    request: Request,
+    payload: dict = Depends(verify_token),
+    db: Session = Depends(get_db)
+):
+    """
+    Modifica un slice con sus VMs asociadas para el usuario autenticado.
+    """
+    data = await request.json()
+    name = data.get("name", "SliceDemo")
+    nodes = data.get("nodes", [])
+    links = data.get("links", [])
+
+    template = {
+        "nodes": nodes,
+        "links": links
+    }
+
+    # Obtener usuario desde el token
+    username = payload["sub"]
+    user = db.execute(
+        text("SELECT id FROM user WHERE username = :u"),
+        {"u": username}
+    ).mappings().first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    user_id = user["id"]
+
+    try:
+        # Verificar existencia del slice y que pertenezca al usuario
+        slice_obj = db.execute(
+            text("SELECT * FROM slice WHERE id = :sid AND owner_id = :uid"),
+            {"sid": slice_id, "uid": user_id}
+        ).mappings().first()
+
+        if not slice_obj:
+            raise HTTPException(status_code=404, detail="Slice no encontrado o no pertenece al usuario")
+
+        # Actualizar datos del slice
+        db.execute(
+            text("""
+                UPDATE slice
+                SET name = :name,
+                    template = :template,
+                    status = :status
+                WHERE id = :sid
+            """),
+            {
+                "name": name,
+                "template": json.dumps(template),
+                "status": "ACTUALIZADO",
+                "sid": slice_id
+            }
+        )
+
+        # Eliminar VMs antiguas y crear las nuevas (puedes mejorar esto con un diff si quieres)
+        db.execute(
+            text("DELETE FROM vm WHERE slice_id = :sid"),
+            {"sid": slice_id}
+        )
+
+        for n in nodes:
+            db.execute(
+                text("""
+                    INSERT INTO vm (name, slice_id, image_id, cpu, ram, disk, state)
+                    VALUES (:name, :slice_id, :image_id, :cpu, :ram, :disk, :state)
+                """),
+                {
+                    "name": n["label"],
+                    "slice_id": slice_id,
+                    "image_id": n.get("image_id", 1),
+                    "cpu": n.get("cpu", 1),
+                    "ram": n.get("ram", 256),
+                    "disk": n.get("disk", 3),
+                    "state": "PENDIENTE"
+                }
+            )
+
+        db.commit()
+
+        log_entry(db, "SliceManager", "INFO", f"Slice {slice_id} actualizado correctamente")
+
+        return {
+            "status": "updated",
+            "slice_id": slice_id,
+            "message": f"Slice '{name}' actualizado correctamente"
+        }
+
+    except Exception as e:
+        db.rollback()
+        log_entry(db, "SliceManager", "ERROR", f"Error actualizando slice {slice_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al actualizar slice: {str(e)}")
+
 
 # =====================================================================
 # DELETE /slices/{slice_id}  → eliminar slice completo
@@ -282,7 +384,6 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
         # Borrar en la base de datos (orden correcto debido a FKs)
         db.execute(text("DELETE FROM network_link WHERE slice_id = :sid"), {"sid": slice_id})
         db.execute(text("DELETE FROM vm WHERE slice_id = :sid"), {"sid": slice_id})
-        db.execute(text("DELETE FROM slice_has_topology WHERE slice_id = :sid"), {"sid": slice_id})
         db.execute(text("DELETE FROM logs WHERE module in ('WorkManager','SliceManager') AND message LIKE :sid_match"),
                    {"sid_match": f"%{slice_id}%"})
         db.execute(text("DELETE FROM slice WHERE id = :sid"), {"sid": slice_id})
