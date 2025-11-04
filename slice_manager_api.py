@@ -99,20 +99,17 @@ async def create_slice(
         payload: dict = Depends(verify_token),
         db: Session = Depends(get_db)
 ):
-    """
-    Crea un slice con sus VMs asociadas para el usuario autenticado.
-    """
     data = await request.json()
     name = data.get("name", "SliceDemo")
     nodes = data.get("nodes", [])
     links = data.get("links", [])
 
+    # Crear el template completo
     template = {
         "nodes": nodes,
         "links": links
     }
 
-    # Obtener usuario desde el token
     username = payload["sub"]
     user = db.execute(
         text("SELECT id FROM user WHERE username = :u"),
@@ -126,46 +123,91 @@ async def create_slice(
 
     try:
         # Crear slice
-        print(f"Creando slice '{name}' para usuario '{username}'")
         result_slice = db.execute(
             text("""
                 INSERT INTO slice (name, owner_id, status, template)
                 VALUES (:name, :owner_id, :status, :template)
             """),
-            {"name": name, "owner_id": user_id, "status": "PENDIENTE", "template": json.dumps(template)}
+            {
+                "name": name,
+                "owner_id": user_id,
+                "status": "PENDIENTE",
+                "template": json.dumps(template)
+            }
         )
         db.commit()
         slice_id = result_slice.lastrowid
-        print(f"Slice creado con ID {slice_id}")
 
-        # Crear VMs asociadas
+        # Mapeo de label a vm_id para crear links después
+        vm_label_to_id = {}
+
+        # Contar interfaces por VM (cuántos links tiene cada nodo)
+        interface_count = {}
+        for link in links:
+            from_vm = link["from_vm"]
+            to_vm = link["to_vm"]
+            interface_count[from_vm] = interface_count.get(from_vm, 0) + 1
+            interface_count[to_vm] = interface_count.get(to_vm, 0) + 1
+
+        # Crear VMs con el número correcto de interfaces
         for n in nodes:
-            db.execute(
+            num_ifaces = interface_count.get(n["label"], 1)  # Mínimo 1 interfaz
+
+            result_vm = db.execute(
                 text("""
-                    INSERT INTO vm (name, slice_id, image_id, cpu, ram, disk, state)
-                    VALUES (:name, :slice_id, :image_id, :cpu, :ram, :disk, :state)
+                    INSERT INTO vm (name, slice_id, image_id, cpu, ram, disk, state, num_interfaces)
+                    VALUES (:name, :slice_id, :image_id, :cpu, :ram, :disk, :state, :num_ifaces)
                 """),
                 {
                     "name": n["label"],
                     "slice_id": slice_id,
-                    "image_id": 1,
+                    "image_id": n.get("image_id", 1),
                     "cpu": n.get("cpu", 1),
                     "ram": n.get("ram", 256),
                     "disk": n.get("disk", 3),
-                    "state": "PENDIENTE"
+                    "state": "PENDIENTE",
+                    "num_ifaces": num_ifaces
                 }
             )
+            vm_label_to_id[n["label"]] = result_vm.lastrowid
+
+        db.commit()
+
+        # Crear network_links con VLAN_IDs únicos
+        vlan_id = 100
+        for link in links:
+            from_label = link["from_vm"]
+            to_label = link["to_vm"]
+
+            vm_a_id = vm_label_to_id.get(from_label)
+            vm_b_id = vm_label_to_id.get(to_label)
+
+            if vm_a_id and vm_b_id:
+                db.execute(
+                    text("""
+                        INSERT INTO network_link (slice_id, vlan_id, vm_a_id, vm_b_id)
+                        VALUES (:slice_id, :vlan_id, :vm_a_id, :vm_b_id)
+                    """),
+                    {
+                        "slice_id": slice_id,
+                        "vlan_id": vlan_id,
+                        "vm_a_id": vm_a_id,
+                        "vm_b_id": vm_b_id
+                    }
+                )
+                vlan_id += 100  # Incrementar VLAN para el siguiente link
+
         db.commit()
 
         return {
             "slice_id": slice_id,
             "message": f"Slice {name} guardado (PENDIENTE)",
-            "owner": username
+            "owner": username,
+            "links_created": len(links)
         }
 
     except Exception as e:
         db.rollback()
-        print(f"Error al crear slice: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error al crear slice: {str(e)}")
 
 

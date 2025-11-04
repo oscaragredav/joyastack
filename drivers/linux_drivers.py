@@ -66,3 +66,50 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         }
     finally:
         conn.close()
+
+
+def create_vm_multi_vlan(worker_ip: str, vm_name: str, bridge: str, vlans: list,
+                         vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
+                         num_ifaces: int, image_path: str) -> dict:
+    """
+    Crea una VM con múltiples interfaces TAP, cada una en su propia VLAN.
+    """
+    script_path = "/home/ubuntu/joyastack/scripts/vm_create_multi.sh"
+
+    # Convertir lista de VLANs a string separado por comas
+    vlans_str = ",".join(map(str, vlans)) if vlans else "0"
+
+    cmd = f"{script_path} {vm_name} {bridge} '{vlans_str}' {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)} {image_path}"
+
+    print(f"[LinuxDriver] Creando {vm_name} con VLANs: {vlans}")
+
+    conn = SSHConnection(worker_ip)
+    conn.connect()
+
+    try:
+        stdout, stderr = conn.exec_sudo(cmd)
+
+        # Extraer PID
+        pid = None
+        for line in stdout.split('\n'):
+            if 'PID' in line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[-1].strip('()'))
+                    except ValueError:
+                        pass
+
+        success = stderr == "" or "creada correctamente" in stdout
+
+        return {
+            "worker_ip": worker_ip,
+            "vm_name": vm_name,
+            "stdout": stdout,
+            "stderr": stderr,
+            "success": success,
+            "pid": pid,
+            "vlans": vlans
+        }
+    finally:
+        conn.close()
