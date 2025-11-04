@@ -3,7 +3,8 @@ from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 from hashlib import sha256
 import os
 
@@ -57,11 +58,10 @@ def verify_token(authorization: str = Header(None)):
     token = authorization.replace("Bearer ", "")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
+    except PyJWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
     return payload
-
 
 # ----------------------------------------------------
 # GET: todos los slices de un usuario + VM
