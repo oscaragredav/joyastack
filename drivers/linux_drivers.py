@@ -68,7 +68,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         conn.close()
 
 
-def create_vm_multi_vlan(worker_ip: str, vm_name: str, bridge: str, vlans: list,
+def create_vm_multi_vlan(worker_port: str, vm_name: str, bridge: str, vlans: list,
                          vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
                          num_ifaces: int, image_path: str) -> dict:
     """
@@ -83,8 +83,9 @@ def create_vm_multi_vlan(worker_ip: str, vm_name: str, bridge: str, vlans: list,
 
     print(f"[LinuxDriver] Creando {vm_name} con VLANs: {vlans}")
 
-    conn = SSHConnection(worker_ip)
+    conn = SSHConnection(port=worker_port)
     conn.connect()
+    print(f"[LinuxDriver] Conectado al worker {worker_port}")
 
     try:
         stdout, stderr = conn.exec_sudo(cmd)

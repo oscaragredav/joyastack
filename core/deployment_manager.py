@@ -2,7 +2,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from config.settings import WORKER_IPS
+from config.settings import WORKERS
 from drivers.linux_drivers import create_vm_multi_vlan
 
 
@@ -86,11 +86,14 @@ def deploy_slice(slice_id: int, db: Session):
         db.commit()
 
         results = []
-        worker_ips = WORKER_IPS
+        # worker_ips = WORKER_IPS
+        workers = WORKERS
+        # worker_ips = [worker["ip"] for worker in workers]
+        worker_ports = [worker["ssh_port"] for worker in workers]
 
         for i, vm in enumerate(vms):
-            worker_ip = worker_ips[i % len(worker_ips)]
-            worker_id = i % len(worker_ips) + 1
+            worker_port = worker_ports[i % len(worker_ports)]
+            worker_id = i % len(worker_ports) + 1
             # Calculamos el puerto VNC basado en el ID del slice y la VM
             base_vnc = (worker_id * 10000) + (slice_id % 100 * 100) + (vm.id % 100)
             vnc_port = base_vnc
@@ -118,7 +121,7 @@ def deploy_slice(slice_id: int, db: Session):
 
             # Llamar a create_vm con múltiples VLANs
             res = create_vm_multi_vlan(
-                worker_ip,
+                worker_port,
                 vm["name"],
                 "br-int",
                 vlans,  # Lista de VLANs en lugar de un solo VLAN

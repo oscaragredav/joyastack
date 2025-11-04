@@ -3,7 +3,7 @@ import os
 
 
 class SSHConnection:
-    def __init__(self, host, user="ubuntu", password="RedesCloud2025", port=22, timeout=30):
+    def __init__(self, host="10.20.12.154", user="ubuntu", password="RedesCloud2025", port=22, timeout=30):
         self.host = host
         self.user = user
         self.port = port
