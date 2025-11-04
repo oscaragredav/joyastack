@@ -100,7 +100,6 @@ INFO_FILE="/home/ubuntu/joyastack/var/vms/${VM_NAME}_info.txt"
 cat > "$INFO_FILE" <<EOF
 VM_NAME=$VM_NAME
 PID=$PID
-VLAN_ID=$VLAN_ID
 VNC_PORT=$VNC_PORT
 MAC_ADDRESS=$MAC_ADDRESS
 OVS_NAME=$OVS_NAME
@@ -108,7 +107,6 @@ RAM=$RAM
 CPUS=$CPUS
 DISK=$DISK
 CREATED=$(date '+%Y-%m-%d %H:%M:%S')
-IMAGE=$BASE_IMAGE
 EOF
 
 log "VM $VM_NAME creada correctamente (PID $PID)"

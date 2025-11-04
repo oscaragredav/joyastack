@@ -89,11 +89,16 @@ def deploy_slice(slice_id: int, db: Session):
         # worker_ips = WORKER_IPS
         workers = WORKERS
         # worker_ips = [worker["ip"] for worker in workers]
-        worker_ports = [worker["ssh_port"] for worker in workers]
+        print("[DeploymentManager] Workers disponibles:", workers)
+        worker_ports = [worker["ssh_port"] for worker in workers.values()]
+        print("[DeploymentManager] Worker SSH ports:", worker_ports)
 
         for i, vm in enumerate(vms):
+            print("[DeploymentManager] Desplegando VM:", vm["name"])
             worker_port = worker_ports[i % len(worker_ports)]
+            print(f"[DeploymentManager] VM {vm['name']} asignada al worker puerto {worker_port}")
             worker_id = i % len(worker_ports) + 1
+            print(f"[DeploymentManager] Worker ID para VM {vm['name']}: {worker_id}")
             # Calculamos el puerto VNC basado en el ID del slice y la VM
             base_vnc = (worker_id * 10000) + (slice_id % 100 * 100) + (vm.id % 100)
             vnc_port = base_vnc
@@ -119,6 +124,7 @@ def deploy_slice(slice_id: int, db: Session):
             # Preparar lista de VLANs para esta VM
             vlans = [link["vlan_id"] for link in links]
 
+            print(f"[DeploymentManager] Creando VM {vm['name']} en worker puerto {worker_port} con VLANs {vlans}")
             # Llamar a create_vm con múltiples VLANs
             res = create_vm_multi_vlan(
                 worker_port,
@@ -135,21 +141,42 @@ def deploy_slice(slice_id: int, db: Session):
 
             print(f"[DeploymentManager] Resultado de create_vm para {vm.name}: {res}")
 
-            vm.state = "DESPLEGADO" if res["success"] else "ERROR"
-            vm.worker_id = worker_id
+            new_state = "DESPLEGADO" if res["success"] else "ERROR"
+            vm_id = vm["id"]
+
+            db.execute(
+                text("UPDATE vm SET state = :state, worker_id = :worker_id WHERE id = :vid"),
+                {"state": new_state, "worker_id": worker_id, "vid": vm_id}
+            )
 
             if res["success"] and "pid" in res:
-                print(f"[DeploymentManager] Guardando PID {res['pid']} para VM {vm.name}")
-                vm.pid = res["pid"]
-                db.add(vm)
+                pid_value = res["pid"]
+                print(f"[DeploymentManager] Guardando PID {pid_value} para VM {vm['name']}")
+
+                db.execute(
+                    text("UPDATE vm SET pid = :pid WHERE id = :vid"),
+                    {"pid": pid_value, "vid": vm_id}
+                )
                 db.flush()
             else:
-                print(f"[DeploymentManager] No se pudo obtener PID para VM {vm.name}")
+                print(f"[DeploymentManager] No se pudo obtener PID para VM {vm['name']}")
                 print(f"[DeploymentManager] Success: {res['success']}, PID en resultado: {'pid' in res}")
 
             results.append(res)
+            print(f" SSH Tunnel: ssh -NL :30011:127.0.0.1:{vnc_port}")
 
-        slice_obj.status = "DESPLEGADO"
+        print("[DeploymentManager] Actualizando estado del slice a DESPLEGADO")
+        db.execute(
+            text("""
+                UPDATE slice
+                SET status = :status
+                WHERE id = :sid
+            """),
+            {
+                "status": "DESPLEGADO",
+                "sid": slice_id
+            }
+        )
         db.commit()
         return results
     except Exception as e:

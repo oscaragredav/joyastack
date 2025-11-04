@@ -13,11 +13,13 @@ class SSHConnection:
 
     def connect(self):
         """Establece conexión SSH"""
+        print(f"Conectando a {self.user}@{self.host} -p {self.port}...")
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self.client.connect(
             hostname=self.host,
             username=self.user,
+            password=self.password,
             port=self.port,
             timeout=self.timeout
         )
@@ -38,10 +40,11 @@ class SSHConnection:
     def exec_sudo(self, command):
         """Ejecuta un comando con sudo enviando la contraseña (no seguro, solo para pruebas)"""
         if not self.client:
+            print("NO HAY CLIENTE")
             raise Exception("No hay conexión SSH activa")
         cmd = f"sudo -S {command}"
         stdin, stdout, stderr = self.client.exec_command(cmd)
-        stdin.write("ubuntu\n")
+        stdin.write(self.password + "\n")
         stdin.flush()
         return stdout.read().decode(), stderr.read().decode()
 
@@ -50,7 +53,7 @@ def run(host: str, cmd: str, user: str = "ubuntu", port: int = 22, timeout: int 
     """
     Ejecución rápida de un comando SSH (sin clase persistente)
     """
-    conn = SSHConnection(host, user, port, timeout)
+    conn = SSHConnection(host, user, port=port, timeout=timeout)
     conn.connect()
     out, err = conn.exec_sudo(cmd) if cmd.startswith("sudo ") else conn.exec_command(cmd)
     conn.close()

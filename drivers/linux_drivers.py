@@ -1,3 +1,4 @@
+from utils import ssh
 from utils.ssh import SSHConnection
 
 
@@ -68,13 +69,23 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         conn.close()
 
 
-def create_vm_multi_vlan(worker_port: str, vm_name: str, bridge: str, vlans: list,
+def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: list,
                          vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
                          num_ifaces: int, image_path: str) -> dict:
     """
     Crea una VM con múltiples interfaces TAP, cada una en su propia VLAN.
     """
-    script_path = "/home/ubuntu/joyastack/scripts/vm_create_multi.sh"
+
+    conn = SSHConnection(port=worker_port)
+    print(f"[LinuxDriver] Conectado al worker {worker_port}")
+    conn.connect()
+    print(f"[LinuxDriver] Conexión establecida con el worker {worker_port}")
+
+    script_path = "/tmp/vm_create.sh"
+    sftp = conn.client.open_sftp()
+    sftp.put("/Users/morillos161/Documents/joyastack/scripts/vm_create_multi.sh", script_path)
+    sftp.chmod(script_path, 0o755)
+    sftp.close()
 
     # Convertir lista de VLANs a string separado por comas
     vlans_str = ",".join(map(str, vlans)) if vlans else "0"
@@ -83,13 +94,10 @@ def create_vm_multi_vlan(worker_port: str, vm_name: str, bridge: str, vlans: lis
 
     print(f"[LinuxDriver] Creando {vm_name} con VLANs: {vlans}")
 
-    conn = SSHConnection(port=worker_port)
-    conn.connect()
-    print(f"[LinuxDriver] Conectado al worker {worker_port}")
-
     try:
+        print(f"[LinuxDriver] Ejecutando comando: {cmd}")
         stdout, stderr = conn.exec_sudo(cmd)
-
+        print(f"[LinuxDriver] STDOUT:\n{stdout}")
         # Extraer PID
         pid = None
         for line in stdout.split('\n'):
@@ -104,7 +112,7 @@ def create_vm_multi_vlan(worker_port: str, vm_name: str, bridge: str, vlans: lis
         success = stderr == "" or "creada correctamente" in stdout
 
         return {
-            "worker_ip": worker_ip,
+            "worker_port": worker_port,
             "vm_name": vm_name,
             "stdout": stdout,
             "stderr": stderr,

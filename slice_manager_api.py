@@ -30,17 +30,18 @@ app.add_middleware(
 )
 
 
-def log_entry(db, module, level, message):
+def log_entry(db, module, level, message, slice_id):
     db.execute(
         text("""
-            INSERT INTO logs (module, timestamp, level, message)
-            VALUES (:m, :ts, :lvl, :msg)
+            INSERT INTO logs (module, timestamp, level, message, slice_id)
+            VALUES (:m, :ts, :lvl, :msg, :sid)
         """),
         {
             "m": module,
             "ts": datetime.utcnow(),
             "lvl": level,
             "msg": message,
+            "sid": slice_id
         },
     )
     db.commit()
@@ -327,7 +328,7 @@ async def update_slice(
             {
                 "name": name,
                 "template": json.dumps(template),
-                "status": "ACTUALIZADO",
+                "status": "PENDIENTE",
                 "sid": slice_id
             }
         )
@@ -357,7 +358,7 @@ async def update_slice(
 
         db.commit()
 
-        log_entry(db, "SliceManager", "INFO", f"Slice {slice_id} actualizado correctamente")
+        log_entry(db, "SliceManager", "INFO", f"Slice {slice_id} actualizado correctamente", slice_id)
 
         return {
             "status": "updated",
