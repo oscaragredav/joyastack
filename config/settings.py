@@ -14,7 +14,7 @@ DB_NAME = os.getenv("MYSQL_DB", "joyastack")
 DB_URL = f"mysql+mysqlconnector://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- Otros parámetros globales para añadir al .env ---
-# WORKER_IPS = ["192.168.201.2", "192.168.201.3", "192.168.201.4"]
+WORKER_IPS = ["192.168.201.2", "192.168.201.3", "192.168.201.4"]
 WORKERS = {
     "worker1": {"ip": "192.168.201.2", "ssh_port": 5811},
     "worker2": {"ip": "192.168.201.3", "ssh_port": 5812},

@@ -1,6 +1,7 @@
 import paramiko
 import os
 
+
 class SSHConnection:
     def __init__(self, host, user="ubuntu", password="RedesCloud2025", port=22, timeout=30):
         self.host = host
