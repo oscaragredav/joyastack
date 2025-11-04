@@ -179,20 +179,20 @@ async def create_slice(
             from_label = link["from_vm"]
             to_label = link["to_vm"]
 
-            vm_a_id = vm_label_to_id.get(from_label)
-            vm_b_id = vm_label_to_id.get(to_label)
+            vm_a = vm_label_to_id.get(from_label)
+            vm_b = vm_label_to_id.get(to_label)
 
-            if vm_a_id and vm_b_id:
+            if vm_a and vm_b:
                 db.execute(
                     text("""
-                        INSERT INTO network_link (slice_id, vlan_id, vm_a_id, vm_b_id)
-                        VALUES (:slice_id, :vlan_id, :vm_a_id, :vm_b_id)
+                        INSERT INTO network_link (slice_id, vlan_id, vm_a, vm_b)
+                        VALUES (:slice_id, :vlan_id, :vm_a, :vm_b)
                     """),
                     {
                         "slice_id": slice_id,
                         "vlan_id": vlan_id,
-                        "vm_a_id": vm_a_id,
-                        "vm_b_id": vm_b_id
+                        "vm_a": vm_a,
+                        "vm_b": vm_b
                     }
                 )
                 vlan_id += 100  # Incrementar VLAN para el siguiente link
@@ -207,6 +207,7 @@ async def create_slice(
         }
 
     except Exception as e:
+        print(f"Error creando slice: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear slice: {str(e)}")
 
@@ -261,6 +262,7 @@ async def validate_deploy_slice(
         }
 
     except Exception as e:
+        print(f"Error creando slice: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Error al desplegar slice: {str(e)}"
@@ -364,6 +366,7 @@ async def update_slice(
         }
 
     except Exception as e:
+        print(f"Error creando slice: {e}")
         db.rollback()
         log_entry(db, "SliceManager", "ERROR", f"Error actualizando slice {slice_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error al actualizar slice: {str(e)}")
@@ -419,6 +422,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
                     conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
                     log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
                 except Exception as e:
+                    print(f"Error creando slice: {e}")
                     log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}")
                 finally:
                     conn.close()
@@ -435,6 +439,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
         return {"status": "deleted", "slice_id": slice_id}
 
     except Exception as e:
+        print(f"Error creando slice: {e}")
         db.rollback()
         log_entry(db, "SliceManager", "ERROR", f"Error eliminando slice: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -490,7 +495,7 @@ def upload_image(
 
     # Datos SSH del HeadNode (vía gateway)
     ssh_headnode = SSHConnection(
-        ip="10.20.12.154", port=5824, user="ubuntu", password="RedesCloud2025"
+        host="10.20.12.154", port=5821, user="ubuntu", password="RedesCloud2025"
     )
 
     if not ssh_headnode.connect():
@@ -557,6 +562,7 @@ def upload_image(
         }
 
     except Exception as e:
+        print(f"Error creando slice: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:

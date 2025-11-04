@@ -75,6 +75,7 @@ def deploy_slice(slice_id: int, db: Session):
         )
         db.commit()
 
+        print("[DeploymentManager] Nombres únicos generados para Slice y VMs.")
         # Generar nombres únicos para todas las VMs pendientes
         for vm in vms:
             new_vm_name = generate_unique_name(db, "vm", vm["name"])  # Modificar función
@@ -105,9 +106,9 @@ def deploy_slice(slice_id: int, db: Session):
             # Obtener los links donde esta VM participa
             links = db.execute(
                 text("""
-                    SELECT vlan_id, vm_a_id, vm_b_id 
+                    SELECT vlan_id, vm_a, vm_b 
                     FROM network_link 
-                    WHERE slice_id = :sid AND (vm_a_id = :vid OR vm_b_id = :vid)
+                    WHERE slice_id = :sid AND (vm_a = :vid OR vm_b = :vid)
                 """),
                 {"sid": slice_id, "vid": vm["id"]}
             ).mappings().all()
@@ -149,6 +150,7 @@ def deploy_slice(slice_id: int, db: Session):
         db.commit()
         return results
     except Exception as e:
+        print(f"Error creando slice: {e}")
         db.rollback()
         raise e
 
