@@ -1,19 +1,11 @@
 from fastapi import FastAPI
-from typing import List, Dict
-#
-# Este código define una API REST con FastAPI que expone un endpoint /placement,
-# el cual ejecuta un algoritmo de colocación de máquinas virtuales (VMs) en hosts físicos,
-# usando una versión multidimensional del algoritmo Bin Packing con balanceo de carga
-# y overcommit. Basado en el enfoque First Fit Decreasing (FFD)
-#
-
-app = FastAPI(title="Bin Packing API", version="1.0")
+import random
+app = FastAPI(title="Improved Genetic Algorithm for VM Placement", version="I-GA 1.0")
 
 @app.get("/placement")
 def get_vm_placement():
     # -----------------------------
-    # -----------------------------
-    # Datos hardcodeados
+    # Datos de entrada
     # -----------------------------
     vms = [
         {"id": "vm1", "cpu": 4, "ram": 8, "storage": 100},
@@ -23,110 +15,174 @@ def get_vm_placement():
     ]
 
     hosts = [
-        {"id": "h1", "cpu": 10, "ram": 20, "storage": 200},
-        {"id": "h2", "cpu": 12, "ram": 24, "storage": 250},
-        {"id": "h3", "cpu": 16, "ram": 32, "storage": 300}
+        {"id": "h1", "cpu": 10, "ram": 20, "storage": 200, "availability": 0.98, "power_idle": 100, "power_max": 250},
+        {"id": "h2", "cpu": 12, "ram": 24, "storage": 250, "availability": 0.97, "power_idle": 120, "power_max": 270},
+        {"id": "h3", "cpu": 16, "ram": 32, "storage": 300, "availability": 0.99, "power_idle": 140, "power_max": 300}
     ]
 
     # -----------------------------
     # Parámetros del sistema
     # -----------------------------
-    W_CPU = 1.0
-    W_RAM = 0.5
-    W_STORAGE = 0.2
-    W_BALANCE = 0.8
-
-    # Overcommit ratios
     CPU_OVER = 1.2
     RAM_OVER = 1.5
     STORAGE_OVER = 1.0
 
-    # Umbrales
-    CPU_THRESHOLD = 0.85
-    RAM_THRESHOLD = 0.90
-    STORAGE_THRESHOLD = 0.95
-
     # -----------------------------
-    # Preprocesamiento
+    # Preprocesamiento (VHAM)
     # -----------------------------
     for h in hosts:
         h["cpu_virtual"] = h["cpu"] * CPU_OVER
         h["ram_virtual"] = h["ram"] * RAM_OVER
         h["storage_virtual"] = h["storage"] * STORAGE_OVER
-        h["used_cpu"] = 0
-        h["used_ram"] = 0
-        h["used_storage"] = 0
+        # Clustering virtual (VHAM): score ponderado
+        h["vham_score"] = (
+            0.6 * (h["cpu_virtual"] / max(h2["cpu_virtual"] for h2 in hosts))
+            + 0.3 * h["availability"]
+            - 0.1 * (h["power_max"] / max(h2["power_max"] for h2 in hosts))
+        )
+
+    hosts.sort(key=lambda x: x["vham_score"], reverse=True)
 
     # -----------------------------
-    # 1. Ordenar VMs por demanda total
+    # Parámetros del algoritmo I-GA
     # -----------------------------
-    def total_demand(vm):
-        return vm["cpu"] * W_CPU + vm["ram"] * W_RAM + vm["storage"] * W_STORAGE
+    POP_SIZE = 50
+    GENERATIONS = 100
+    ELITE_SIZE = 5
+    MUTATION_RATE = 0.2
 
-    vms.sort(key=total_demand, reverse=True)
+    n_vms = len(vms)
+    n_hosts = len(hosts)
+
+    # -----------------------------
+    # Función de energía y disponibilidad
+    # -----------------------------
+    def energy_consumption(usage_ratio, host):
+        """Modelo simple de energía basado en el paper (ecuación 8)."""
+        return host["power_idle"] + (host["power_max"] - host["power_idle"]) * (usage_ratio ** 3)
+
+    def availability_product(used_hosts):
+        """Disponibilidad total multiplicada (ecuación 13 del paper)."""
+        prod = 1.0
+        for h in used_hosts:
+            prod *= h["availability"]
+        return prod
+
+    # -----------------------------
+    # Fitness según ecuación (16)
+    # -----------------------------
+    def fitness(chromosome):
+        usage = {h["id"]: {"cpu": 0, "ram": 0, "storage": 0} for h in hosts}
+
+        for i, vm in enumerate(vms):
+            h = hosts[chromosome[i]]
+            usage[h["id"]]["cpu"] += vm["cpu"]
+            usage[h["id"]]["ram"] += vm["ram"]
+            usage[h["id"]]["storage"] += vm["storage"]
+
+        active_hosts = []
+        total_energy = 0
+        for h in hosts:
+            cpu_ratio = usage[h["id"]]["cpu"] / h["cpu_virtual"]
+            if cpu_ratio > 0:  # host activo
+                active_hosts.append(h)
+                total_energy += energy_consumption(cpu_ratio, h)
+
+        if not active_hosts:
+            return float("inf")
+
+        availability = availability_product(active_hosts)
+        E_min = min(h["power_idle"] for h in hosts)
+
+        # Ecuación (16)
+        G_T = 0.5 * ((E_min / total_energy) + availability)
+        return 1 / G_T  # invertimos para minimizar
+
+    # -----------------------------
+    # Inicialización (VHAM-guided)
+    # -----------------------------
+    def create_chromosome():
+        chrom = []
+        for vm in vms:
+            # probabilidad proporcional al score VHAM
+            probs = [h["vham_score"] for h in hosts]
+            s = sum(probs)
+            probs = [p / s for p in probs]
+            host_idx = random.choices(range(n_hosts), weights=probs, k=1)[0]
+            chrom.append(host_idx)
+        return chrom
+
+    # -----------------------------
+    # Crossover jerárquico (por clusters)
+    # -----------------------------
+    def crossover(p1, p2):
+        cluster_size = n_vms // 2
+        point = random.randint(0, cluster_size - 1)
+        return p1[:point] + p2[point:]
+
+    # -----------------------------
+    # Mutación adaptativa (carga desequilibrada)
+    # -----------------------------
+    def mutate(chrom):
+        for i in range(n_vms):
+            if random.random() < MUTATION_RATE:
+                host_idx = random.randint(0, n_hosts - 1)
+                chrom[i] = host_idx
+        return chrom
+
+    # -----------------------------
+    # Población inicial
+    # -----------------------------
+    population = [create_chromosome() for _ in range(POP_SIZE)]
+
+    # -----------------------------
+    # Evolución principal
+    # -----------------------------
+    for _ in range(GENERATIONS):
+        scored = [(chrom, fitness(chrom)) for chrom in population]
+        scored.sort(key=lambda x: x[1])
+        elites = [x[0] for x in scored[:ELITE_SIZE]]
+
+        new_population = elites.copy()
+        while len(new_population) < POP_SIZE:
+            p1, p2 = random.sample(elites, 2)
+            child = crossover(p1, p2)
+            child = mutate(child)
+            new_population.append(child)
+        population = new_population
+
+    # -----------------------------
+    # Mejor resultado
+    # -----------------------------
+    best = min(population, key=fitness)
     placement = {h["id"]: [] for h in hosts}
-    unassigned = []
+    used = {h["id"]: {"cpu": 0, "ram": 0, "storage": 0} for h in hosts}
 
-    # -----------------------------
-    # 2. Asignación principal
-    # -----------------------------
-    for vm in vms:
-        best_host = None
-        best_score = float("inf")
+    for i, vm in enumerate(vms):
+        h_id = hosts[best[i]]["id"]
+        placement[h_id].append(vm["id"])
+        used[h_id]["cpu"] += vm["cpu"]
+        used[h_id]["ram"] += vm["ram"]
+        used[h_id]["storage"] += vm["storage"]
 
-        for host in hosts:
-            new_cpu_used = host["used_cpu"] + vm["cpu"]
-            new_ram_used = host["used_ram"] + vm["ram"]
-            new_storage_used = host["used_storage"] + vm["storage"]
-
-            cpu_ratio = new_cpu_used / host["cpu_virtual"]
-            ram_ratio = new_ram_used / host["ram_virtual"]
-            storage_ratio = new_storage_used / host["storage_virtual"]
-
-            if (
-                cpu_ratio <= CPU_THRESHOLD and
-                ram_ratio <= RAM_THRESHOLD and
-                storage_ratio <= STORAGE_THRESHOLD
-            ):
-                cpu_left = host["cpu_virtual"] - new_cpu_used
-                ram_left = host["ram_virtual"] - new_ram_used
-                storage_left = host["storage_virtual"] - new_storage_used
-
-                fit_score = cpu_left * W_CPU + ram_left * W_RAM + storage_left * W_STORAGE
-                avg_usage = (cpu_ratio + ram_ratio + storage_ratio) / 3
-                balance_score = abs(0.5 - avg_usage)
-
-                total_score = fit_score + W_BALANCE * balance_score
-
-                if total_score < best_score:
-                    best_score = total_score
-                    best_host = host
-
-        if best_host:
-            best_host["used_cpu"] += vm["cpu"]
-            best_host["used_ram"] += vm["ram"]
-            best_host["used_storage"] += vm["storage"]
-            placement[best_host["id"]].append(vm["id"])
-        else:
-            unassigned.append(vm["id"])
-
-    # -----------------------------
-    # Resultados finales
-    # -----------------------------
     usage_summary = []
     for h in hosts:
-        cpu_ratio = h["used_cpu"] / h["cpu_virtual"]
-        ram_ratio = h["used_ram"] / h["ram_virtual"]
-        storage_ratio = h["used_storage"] / h["storage_virtual"]
+        cpu_ratio = used[h["id"]]["cpu"] / h["cpu_virtual"]
+        energy = energy_consumption(cpu_ratio, h)
         usage_summary.append({
             "host_id": h["id"],
             "cpu_usage": round(cpu_ratio, 3),
-            "ram_usage": round(ram_ratio, 3),
-            "storage_usage": round(storage_ratio, 3),
+            "energy": round(energy, 2),
+            "availability": h["availability"],
             "assigned_vms": placement[h["id"]]
         })
 
+    total_energy = sum(u["energy"] for u in usage_summary)
+    total_avail = availability_product([h for h in hosts if used[h["id"]]["cpu"] > 0])
+
     return {
         "placements": usage_summary,
-        "unassigned_vms": unassigned
+        "total_energy": round(total_energy, 2),
+        "total_availability": round(total_avail, 4),
+        "fitness_score": round(fitness(best), 4)
     }
