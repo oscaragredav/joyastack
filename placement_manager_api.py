@@ -1,9 +1,48 @@
-from fastapi import FastAPI, HTTPException
+import time
+
+from fastapi import FastAPI, HTTPException, Header, Request
 import random
 import requests
-from typing import List, Dict
+from typing import List, Dict, Optional
+import logging
+
+from starlette.middleware.cors import CORSMiddleware
+
+# Configurar logging detallado
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Improved Genetic Algorithm for VM Placement", version="I-GA 1.0")
+
+# ============================================
+# CONFIGURAR CORS (UNA SOLA VEZ)
+# ============================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ============================================
+# MIDDLEWARE PARA DEBUG (UNA SOLA VEZ)
+# ============================================
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    logger.info(f"🔵 INCOMING: {request.method} {request.url.path}")
+
+    response = await call_next(request)
+
+    duration = time.time() - start_time
+    logger.info(f"🟢 RESPONSE: Status {response.status_code} | {duration:.2f}s")
+
+    return response
 
 
 # -----------------------------
@@ -12,20 +51,20 @@ app = FastAPI(title="Improved Genetic Algorithm for VM Placement", version="I-GA
 def get_hosts():
     """Obtiene la lista de hosts disponibles desde la API de recursos"""
     try:
-        resp = requests.get("http://localhost:8001/hosts", timeout=5)
+        resp = requests.get("http://localhost:8003/hosts", timeout=5)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+        if isinstance(data, dict) and "hosts" in data:
+            hosts = data["hosts"]
+        else:
+            hosts = data
+
+        logger.info(f"✓ Obtenidos {len(hosts)} hosts desde API de recursos")
+        return hosts
     except Exception as e:
-        print(f"Error obteniendo hosts: {e}")
-        # Hosts de fallback para testing
-        return [
-            {"id": "host1", "cpu": 16, "ram": 32, "storage": 500, "availability": 0.99, "power_idle": 100,
-             "power_max": 300},
-            {"id": "host2", "cpu": 12, "ram": 24, "storage": 400, "availability": 0.95, "power_idle": 90,
-             "power_max": 250},
-            {"id": "host3", "cpu": 20, "ram": 48, "storage": 800, "availability": 0.98, "power_idle": 120,
-             "power_max": 350}
-        ]
+        logger.error(f"✗ Error obteniendo hosts: {e}")
+        return []
 
 
 # -----------------------------
@@ -59,17 +98,22 @@ def availability_product(used_hosts):
 
 
 def preprocess_hosts(hosts):
-    """Aplica VHAM (Virtual Host Availability Model)"""
+    """Aplica VHAM (Virtual Host Availability Model) con overcommit y clustering virtual"""
     for h in hosts:
         h["cpu_virtual"] = h["cpu"] * CPU_OVER
         h["ram_virtual"] = h["ram"] * RAM_OVER
         h["storage_virtual"] = h["storage"] * STORAGE_OVER
-        # Clustering virtual (VHAM): score ponderado
+
+    max_cpu_v = max(h["cpu_virtual"] for h in hosts)
+    max_power = max(h["power_max"] for h in hosts)
+
+    for h in hosts:
         h["vham_score"] = (
-                0.6 * (h["cpu_virtual"] / max(h2["cpu_virtual"] for h2 in hosts))
-                + 0.3 * h["availability"]
-                - 0.1 * (h["power_max"] / max(h2["power_max"] for h2 in hosts))
+                0.6 * (h["cpu_virtual"] / max_cpu_v) +
+                0.3 * h["availability"] -
+                0.1 * (h["power_max"] / max_power)
         )
+
     hosts.sort(key=lambda x: x["vham_score"], reverse=True)
     return hosts
 
@@ -89,7 +133,7 @@ def fitness(chromosome, vms, hosts):
 
     for h in hosts:
         cpu_ratio = usage[h["id"]]["cpu"] / h["cpu_virtual"]
-        if cpu_ratio > 0:  # host activo
+        if cpu_ratio > 0:
             active_hosts.append(h)
             total_energy += energy_consumption(cpu_ratio, h)
 
@@ -99,16 +143,14 @@ def fitness(chromosome, vms, hosts):
     availability = availability_product(active_hosts)
     E_min = min(h["power_idle"] for h in hosts)
 
-    # Ecuación (16)
     G_T = 0.5 * ((E_min / total_energy) + availability)
-    return 1 / G_T  # invertimos para minimizar
+    return 1 / G_T
 
 
 def create_chromosome(vms, hosts):
     """Inicialización guiada por VHAM"""
     chrom = []
     for vm in vms:
-        # probabilidad proporcional al score VHAM
         probs = [h["vham_score"] for h in hosts]
         s = sum(probs)
         probs = [p / s for p in probs]
@@ -119,7 +161,7 @@ def create_chromosome(vms, hosts):
 
 def crossover(p1, p2, n_vms):
     """Crossover jerárquico (por clusters)"""
-    cluster_size = n_vms // 2
+    cluster_size = max(1, n_vms // 2)
     point = random.randint(0, cluster_size - 1)
     return p1[:point] + p2[point:]
 
@@ -137,11 +179,9 @@ def run_genetic_algorithm(vms, hosts):
     n_vms = len(vms)
     n_hosts = len(hosts)
 
-    # Población inicial
     population = [create_chromosome(vms, hosts) for _ in range(POP_SIZE)]
 
-    # Evolución principal
-    for _ in range(GENERATIONS):
+    for gen in range(GENERATIONS):
         scored = [(chrom, fitness(chrom, vms, hosts)) for chrom in population]
         scored.sort(key=lambda x: x[1])
         elites = [x[0] for x in scored[:ELITE_SIZE]]
@@ -155,7 +195,6 @@ def run_genetic_algorithm(vms, hosts):
 
         population = new_population
 
-    # Mejor resultado
     best = min(population, key=lambda c: fitness(c, vms, hosts))
     return best
 
@@ -210,79 +249,162 @@ def get_vm_placement():
         {"id": "vm4", "cpu": 3, "ram": 4, "storage": 50}
     ]
     hosts = get_hosts()
-    hosts = preprocess_hosts(hosts)
 
+    if not hosts:
+        raise HTTPException(status_code=503, detail="No hay hosts disponibles")
+
+    hosts = preprocess_hosts(hosts)
     best = run_genetic_algorithm(vms, hosts)
     return build_placement_result(best, vms, hosts)
 
 
 @app.post("/placement/slice/{slice_id}")
-def get_slice_placement(slice_id: int):
+async def get_slice_placement(
+        slice_id: int,
+        request: Request,
+        authorization: Optional[str] = Header(None)
+):
     """
     Calcula el placement óptimo para las VMs de un slice específico.
 
-    Parámetros:
-    - slice_id: ID del slice a desplegar
-
-    Retorna:
-    - placements: Lista de hosts con las VMs asignadas
-    - total_energy: Consumo energético total
-    - total_availability: Disponibilidad agregada del sistema
-    - fitness_score: Puntuación de calidad del placement
+    MÉTODO PRINCIPAL: Recibe VMs en el body para evitar consulta circular al SliceManager
     """
     try:
-        # Obtener las VMs del slice desde el slice manager
-        resp = requests.get(f"http://localhost:8001/slices/{slice_id}", timeout=5)
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail=f"Slice {slice_id} no encontrado")
-        resp.raise_for_status()
+        logger.info(f"🔍 [Slice {slice_id}] Procesando solicitud de placement")
 
-        slice_data = resp.json()
+        # ============================================
+        # PASO 1: INTENTAR LEER VMS DEL BODY
+        # ============================================
+        vms_data = None
+        try:
+            body = await request.json()
+            vms_data = body.get("vms")
+            if vms_data:
+                logger.info(f"✓ Recibidas {len(vms_data)} VMs en el body del request")
+        except Exception as e:
+            logger.warning(f"⚠️  No se pudo leer body: {e}")
+            vms_data = None
 
-        # Extraer VMs del slice
-        if "vms" not in slice_data or not slice_data["vms"]:
-            raise HTTPException(status_code=400, detail="El slice no tiene VMs definidas")
+        # ============================================
+        # PASO 2: PROCESAR VMS
+        # ============================================
+        if vms_data and len(vms_data) > 0:
+            # Usar VMs del body (evita consulta al SliceManager)
+            vms = []
+            for vm in vms_data:
+                vms.append({
+                    "id": vm.get("name") or f"vm_{vm['id']}",
+                    "vm_id": vm["id"],
+                    "cpu": vm.get("cpu", 1),
+                    "ram": vm.get("ram", 256),
+                    "storage": vm.get("disk", 3)
+                })
 
-        vms = []
-        for vm in slice_data["vms"]:
-            vms.append({
-                "id": vm.get("name") or f"vm_{vm['id']}",
-                "vm_id": vm["id"],  # ID original de la VM en la BD
-                "cpu": vm.get("cpu", 1),
-                "ram": vm.get("ram", 256),
-                "storage": vm.get("disk", 3)
-            })
+            logger.info(f"✓ VMs procesadas desde body: {[v['id'] for v in vms]}")
 
-        # Obtener hosts disponibles
+        else:
+            # Fallback: consultar al SliceManager (solo si es necesario)
+            logger.info(f"📡 Consultando SliceManager (fallback)...")
+
+            token = authorization
+            if not token:
+                token = request.headers.get("Authorization") or request.headers.get("authorization")
+
+            headers = {}
+            if token:
+                if not token.startswith("Bearer "):
+                    headers["Authorization"] = f"Bearer {token}"
+                else:
+                    headers["Authorization"] = token
+
+            try:
+                resp = requests.get(
+                    f"http://localhost:8001/slices/{slice_id}",
+                    headers=headers,
+                    timeout=10
+                )
+
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=resp.status_code,
+                        detail=f"Error en SliceManager: {resp.text}"
+                    )
+
+                slice_data = resp.json()
+
+                if "vms" not in slice_data or not slice_data["vms"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"El slice {slice_id} no tiene VMs definidas"
+                    )
+
+                vms = []
+                for vm in slice_data["vms"]:
+                    vms.append({
+                        "id": vm.get("name") or f"vm_{vm['id']}",
+                        "vm_id": vm["id"],
+                        "cpu": vm.get("cpu", 1),
+                        "ram": vm.get("ram", 256),
+                        "storage": vm.get("disk", 3)
+                    })
+
+            except requests.exceptions.Timeout:
+                raise HTTPException(
+                    status_code=504,
+                    detail="Timeout conectando con SliceManager"
+                )
+            except requests.exceptions.ConnectionError:
+                raise HTTPException(
+                    status_code=503,
+                    detail="No se pudo conectar con SliceManager"
+                )
+
+        # ============================================
+        # PASO 3: OBTENER HOSTS Y EJECUTAR I-GA
+        # ============================================
+
         hosts = get_hosts()
         if not hosts:
-            raise HTTPException(status_code=503, detail="No hay hosts disponibles")
+            raise HTTPException(
+                status_code=503,
+                detail="No hay hosts disponibles en el Resource Manager"
+            )
 
-        # Preprocesar hosts (VHAM)
         hosts = preprocess_hosts(hosts)
+        logger.info(f"✓ Hosts preprocesados: {len(hosts)}")
 
-        # Ejecutar algoritmo genético
+        logger.info(f"🧬 Ejecutando algoritmo I-GA con {len(vms)} VMs...")
         best = run_genetic_algorithm(vms, hosts)
 
-        # Construir resultado
         result = build_placement_result(best, vms, hosts)
 
-        # Agregar información del slice
+        # ============================================
+        # PASO 4: ENRIQUECER RESULTADO
+        # ============================================
+
         result["slice_id"] = slice_id
-        result["slice_name"] = slice_data.get("name", f"Slice-{slice_id}")
         result["total_vms"] = len(vms)
+
+        logger.info(f"✅ Placement completado exitosamente")
+        logger.info(f"   - Energía: {result['total_energy']} W")
+        logger.info(f"   - Disponibilidad: {result['total_availability']}")
+        logger.info(f"   - Fitness: {result['fitness_score']}")
 
         return result
 
+    except HTTPException:
+        raise
     except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Error de red: {str(e)}")
         raise HTTPException(
             status_code=503,
-            detail=f"Error conectando con el slice manager: {str(e)}"
+            detail=f"Error conectando con servicios: {str(e)}"
         )
     except Exception as e:
+        logger.error(f"❌ Error inesperado: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error calculando placement: {str(e)}"
+            detail=f"Error interno calculando placement: {str(e)}"
         )
 
 
@@ -290,21 +412,12 @@ def get_slice_placement(slice_id: int):
 def get_custom_placement(request: Dict):
     """
     Calcula el placement óptimo para una lista personalizada de VMs.
-
-    Body:
-    {
-        "vms": [
-            {"id": "vm1", "cpu": 4, "ram": 8, "storage": 100},
-            {"id": "vm2", "cpu": 2, "ram": 4, "storage": 50}
-        ]
-    }
     """
     vms = request.get("vms", [])
 
     if not vms:
         raise HTTPException(status_code=400, detail="Debe proporcionar al menos una VM")
 
-    # Validar estructura de VMs
     for vm in vms:
         if "id" not in vm or "cpu" not in vm or "ram" not in vm or "storage" not in vm:
             raise HTTPException(
@@ -331,7 +444,11 @@ def health_check():
             "status": "healthy",
             "available_hosts": len(hosts),
             "algorithm": "I-GA",
-            "version": "1.0"
+            "version": "1.0",
+            "services": {
+                "resource_manager": "http://localhost:8003",
+                "slice_manager": "http://localhost:8001"
+            }
         }
     except Exception as e:
         return {

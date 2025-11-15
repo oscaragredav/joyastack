@@ -3,8 +3,8 @@ from datetime import datetime
 
 from fastapi import FastAPI, File, UploadFile, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
-import jwt
-from jwt import PyJWTError
+
+from jose import JWTError, jwt
 from hashlib import sha256
 import os
 
@@ -58,7 +58,7 @@ def verify_token(authorization: str = Header(None)):
     token = authorization.replace("Bearer ", "")
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except PyJWTError:
+    except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido")
 
     return payload
@@ -89,8 +89,66 @@ def get_user_slices(payload: dict = Depends(verify_token), db: Session = Depends
     ).mappings().all()
 
     return {"user": username, "slices": [dict(r) for r in result]}
+#GET OBTENER SLICES POR ID
+@app.get("/slices/{slice_id}")
+def get_slice_by_id(slice_id: int, payload: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    import time
+    import logging
+    logger = logging.getLogger(__name__)
 
+    start = time.time()
+    logger.info(f"⏱️ Inicio get_slice_by_id: {slice_id}")
 
+    username = payload["sub"]
+    logger.info(f"⏱️ Token verificado ({time.time() - start:.2f}s)")
+
+    user = db.execute(
+        text("SELECT id FROM user WHERE username = :u"),
+        {"u": username}
+    ).mappings().first()
+    logger.info(f"⏱️ Usuario obtenido ({time.time() - start:.2f}s)")
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    user_id = user["id"]
+
+    # Obtener el slice
+    slice_data = db.execute(
+        text("""
+            SELECT id, name, status, created_at, template, owner_id
+            FROM slice 
+            WHERE id = :sid AND owner_id = :uid
+        """),
+        {"sid": slice_id, "uid": user_id}
+    ).mappings().first()
+
+    if not slice_data:
+        raise HTTPException(status_code=404, detail="Slice no encontrado")
+
+    # Obtener las VMs del slice
+    vms = db.execute(
+        text("""
+            SELECT id, name, cpu, ram, disk, image_id, state, worker_id
+            FROM vm 
+            WHERE slice_id = :sid
+        """),
+        {"sid": slice_id}
+    ).mappings().all()
+
+    logger.info(f"⏱️ VMs obtenidas ({time.time() - start:.2f}s)")
+
+    result = {
+        "id": slice_data["id"],
+        "name": slice_data["name"],
+        "status": slice_data["status"],
+        "created_at": str(slice_data["created_at"]),
+        "template": slice_data["template"],
+        "vms": [dict(vm) for vm in vms]
+    }
+
+    logger.info(f"⏱️ Total completado en: {time.time() - start:.2f}s")
+    return result
 # ----------------------------------------------------
 # POST: Crear un slice
 # ----------------------------------------------------
@@ -216,15 +274,22 @@ async def create_slice(
 # ----------------------------------------------------
 # POST: Desplegar un slice
 # ----------------------------------------------------
+
 @app.post("/slices/deploy/{slice_id}")
 async def validate_deploy_slice(
         slice_id: int,
         payload: dict = Depends(verify_token),
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        authorization: str = Header(None)  # <-- capturamos el header Authorization
 ):
     """
     Despliega un slice verificando que pertenezca al usuario autenticado.
     """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token no proporcionado")
+
+    token = authorization.split(" ")[1]  # quitar "Bearer "
+
     # Obtener usuario desde el token
     username = payload["sub"]
     user = db.execute(
@@ -253,8 +318,8 @@ async def validate_deploy_slice(
         )
 
     try:
-        # Llamar a la función de despliegue
-        result = deploy_slice(slice_id, db)
+        # Pasar el token a deploy_slice
+        result = deploy_slice(slice_id, db, token)
 
         return {
             "slice_id": slice_id,
