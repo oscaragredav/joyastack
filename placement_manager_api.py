@@ -267,7 +267,7 @@ async def get_slice_placement(
     """
     Calcula el placement óptimo para las VMs de un slice específico.
 
-    MÉTODO PRINCIPAL: Recibe VMs en el body para evitar consulta circular al SliceManager
+    METODO PRINCIPAL: Recibe VMs en el body para evitar consulta circular al SliceManager
     """
     try:
         logger.info(f"🔍 [Slice {slice_id}] Procesando solicitud de placement")
