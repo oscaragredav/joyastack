@@ -229,6 +229,11 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             ).mappings().all()
             vlans = [l["vlan_id"] for l in links]
 
+            print(f"  ✓ Desplegando en Worker {worker_id} (SSH port: {worker_port})")
+            print(f"    - VLANs asignadas: {vlans}")
+            print(f"    - Puerto VNC: {vnc_port}")
+            print(f"    - VM: {vm}")
+
             res = create_vm_multi_vlan(
                 worker_port, vm["name"], "br-int", vlans, vnc_port,
                 vm["cpu"], vm["ram"], vm["disk"], vm["num_interfaces"], image_path=image_path
