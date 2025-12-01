@@ -320,44 +320,69 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
         if platform.lower() == 'openstack':
             print(f"[Deploy] Iniciando OpenStack para Slice {slice_id}")
             os_driver = OpenStackDriver()
-            
-            # a. Crear Proyecto y Topología Base
-            project_id = os_driver.create_project(slice_obj['name'])
-            base_topo = os_driver.create_topology(project_id, slice_obj['name'])
-            
-            # b. Gestión de Puertos y Redes
-            vm_ports_map = {vm['id']: [] for vm in vms_to_deploy_data}
-            
-            # Puertos de Gestión (Internet/SSH)
-            for vm in vms_to_deploy_data:
-                p_id = os_driver.create_port(base_topo['mgmt_network_id'], project_id, base_topo['mgmt_sec_group_id'], f"mgmt_{vm['name']}")
-                vm_ports_map[vm['id']].append(p_id)
 
-            # Puertos de Topología L2 (Enlaces internos)
-            for i, link in enumerate(links_db):
-                l2_net_id = os_driver.create_l2_network(project_id, f"L2_{link['source_vm_id']}_{link['target_vm_id']}")
-                if link['source_vm_id'] in vm_ports_map:
-                    vm_ports_map[link['source_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_src"))
-                if link['target_vm_id'] in vm_ports_map:
-                    vm_ports_map[link['target_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_dst"))
-
-            # c. Despliegue de Instancias
-            for vm in vms_to_deploy_data:
-                # Obtener Zona de Disponibilidad desde Placement (R4)
-                vm_decision = placement_map.get(vm["name"], {})
-                target_az = vm_decision.get("availability_zone", "nova") 
+            # Variable para controlar si debemos hacer rollback
+            deployment_failed = False
+            error_message = ""
+            
+            try:
+                # a. Crear Proyecto y Topología Base
+                project_id = os_driver.create_project(slice_obj['name'])
+                base_topo = os_driver.create_topology(project_id, slice_obj['name'])
                 
-                res = os_driver.deploy_vm(
-                    project_id=project_id,
-                    vm_name=vm["name"],
-                    image_ref=vm["image_ref"],
-                    cpus=vm["cpu"],
-                    ram_mb=int(vm["ram"] * 1024),
-                    port_ids=vm_ports_map[vm['id']],
-                    availability_zone=target_az 
-                )
-                db.execute(text("UPDATE vm SET console_access = :ip WHERE id = :vid"), {"ip": res["ip"], "vid": vm["id"]})
-                results.append({**res, "vm_name": vm["name"], "availability_zone": target_az})
+                # b. Gestión de Puertos y Redes
+                vm_ports_map = {vm['id']: [] for vm in vms_to_deploy_data}
+                
+                # Puertos de Gestión (Internet/SSH)
+                for vm in vms_to_deploy_data:
+                    p_id = os_driver.create_port(base_topo['mgmt_network_id'], project_id, base_topo['mgmt_sec_group_id'], f"mgmt_{vm['name']}")
+                    vm_ports_map[vm['id']].append(p_id)
+
+                # Puertos de Topología L2 (Enlaces internos)
+                for i, link in enumerate(links_db):
+                    l2_net_id = os_driver.create_l2_network(project_id, f"L2_{link['source_vm_id']}_{link['target_vm_id']}")
+                    if link['source_vm_id'] in vm_ports_map:
+                        vm_ports_map[link['source_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_src"))
+                    if link['target_vm_id'] in vm_ports_map:
+                        vm_ports_map[link['target_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_dst"))
+
+                # c. Despliegue de Instancias
+                for vm in vms_to_deploy_data:
+                    # Obtener Zona de Disponibilidad desde Placement (R4)
+                    vm_decision = placement_map.get(vm["name"], {})
+                    target_az = vm_decision.get("availability_zone", "nova") 
+                    
+                    res = os_driver.deploy_vm(
+                        project_id=project_id,
+                        vm_name=vm["name"],
+                        image_ref=vm["image_ref"],
+                        cpus=vm["cpu"],
+                        ram_mb=int(vm["ram"] * 1024),
+                        port_ids=vm_ports_map[vm['id']],
+                        availability_zone=target_az 
+                    )
+                    db.execute(text("UPDATE vm SET console_access = :ip WHERE id = :vid"), {"ip": res["ip"], "vid": vm["id"]})
+                    results.append({**res, "vm_name": vm["name"], "availability_zone": target_az})
+
+            except Exception as e:
+                # !!! LÓGICA DE ROLLBACK !!!
+                deployment_failed = True
+                error_message = str(e)
+                print(f"[Deploy] ERROR CRÍTICO en OpenStack: {e}")
+                print(f"[Deploy] Iniciando ROLLBACK automático para Slice {slice_id}...")
+                
+                # Borrar todo lo creado hasta ahora
+                try:
+                    os_driver.delete_slice_resources(slice_obj['name'])
+                    print("[Deploy] Rollback completado exitosamente.")
+                except Exception as cleanup_error:
+                    print(f"[Deploy] Error durante el rollback: {cleanup_error}")
+
+            # Si falló, lanzamos error para detener todo y notificar al usuario
+            if deployment_failed:
+                db.execute(text("UPDATE slice SET status = 'ERROR' WHERE id = :sid"), {"sid": slice_id})
+                db.commit()
+                raise HTTPException(status_code=500, detail=f"Fallo despliegue OpenStack (Rollback ejecutado): {error_message}")        
 
         # =================================================================
         # === BLOQUE LINUX ===
@@ -423,11 +448,16 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
 
         return response
 
+    except HTTPException as he:
+        # Re-lanzar excepciones HTTP ya controladas
+        raise he
     except Exception as e:
-        print(f"[DeploymentManager] ERROR: {e}")
-        log_entry(db, "DeploymentManager", "ERROR", f"Deployment error: {e}", slice_id)
         db.rollback()
-        raise e
+        log_entry(db, "DeploymentManager", "ERROR", str(e), slice_id)
+        # Si ocurre un error no controlado fuera del bloque OpenStack
+        db.execute(text("UPDATE slice SET status = 'ERROR' WHERE id = :sid"), {"sid": slice_id})
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
 
 # === FUNCIÓN DE BORRADO ===
 def delete_slice_resources(slice_id: int, db: Session):
