@@ -443,13 +443,55 @@ def delete_slice_resources(slice_id: int, db: Session):
             os_driver = OpenStackDriver()
             os_driver.delete_slice_resources(slice_obj['name'])
         else:
-            # Aquí mantienes la lógica de borrado de Linux existente
-            pass
+            # Obtener VMs del slice
+            vms = db.execute(
+                text("""
+                    SELECT v.id, v.cpu, v.ram, v.disk, w.ip as worker_ip, w.id as worker_id
+                    FROM vm v
+                    JOIN worker w ON v.worker_id = w.id
+                    WHERE v.slice_id = :sid
+                """),
+                {"sid": slice_id},
+            ).mappings().all()
+
+            if not vms:
+                return {"status": "not_found", "message": "No hay VMs en este slice"}
+
+            log_entry(db, "SliceManager", "INFO", f"Eliminando slice {slice_id} con {len(vms)} VMs")
+
+            for vm in vms:
+                wip = vm["worker_ip"]
+                ssh_port = None
+                for name, data in WORKER_IPS.items():
+                    if data["ip"] == wip:
+                        ssh_port = data["ssh_port"]
+                        break
+                if not ssh_port:
+                    continue
+
+                conn = SSHConnection(GATEWAY, ssh_port, SSH_USER, SSH_PASS)
+                if conn.connect():
+                    try:
+                        # Matar proceso QEMU si existiese
+                        conn.exec_sudo(f"pkill -f 'qemu-system.*VM_Auto_' || true")
+                        conn.exec_sudo(f"sleep 1")
+                        # Limpiar TAPs y OvS
+                        conn.exec_sudo(
+                            f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
+                        conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
+                        log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
+                    except Exception as e:
+                        print(f"Error creando slice: {e}")
+                        log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}", slice_id)
+                    finally:
+                        conn.close()
 
         db.execute(text("UPDATE slice SET status = 'TERMINATED' WHERE id = :sid"), {"sid": slice_id})
         db.commit()
         return {"status": "success", "message": f"Slice {slice_id} eliminado"}
 
     except Exception as e:
+        print(f"Error eliminando slice: {e}")
+        db.rollback()
         log_entry(db, "DeploymentManager", "ERROR", str(e), slice_id)
         raise HTTPException(status_code=500, detail=str(e))        
