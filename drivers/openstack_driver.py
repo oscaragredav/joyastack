@@ -210,9 +210,37 @@ class OpenStackDriver:
             dict: {id, status, ip} de la VM creada.
         """
         try:
-            clean_image_name = image_ref.split('/')[-1].split('.')[0]
-            if "cirros" in clean_image_name: clean_image_name = "cirros"
-            image = self.conn.compute.find_image(clean_image_name) or list(self.conn.compute.images())[0]
+            # 1. Lógica de Selección de Imagen (Mapping BD -> Glance)
+            filename = image_ref.split('/')[-1].lower() # Ej: focal-server-cloudimg-amd64.img
+            target_image_name = "cirros" # Default seguro
+            
+            if "minimal" in filename:
+                target_image_name = "ubuntu-minimal"
+            elif "server" in filename or "focal" in filename or "noble" in filename:
+                target_image_name = "ubuntu-server"
+            elif "cirros" in filename:
+                target_image_name = "cirros"
+                
+            # Buscar en Glance
+            print(f"[OpenStackDriver] Buscando imagen en Glance para '{filename}' -> '{target_image_name}'")
+            image = self.conn.compute.find_image(target_image_name)
+
+            # Fallback 1: Si no encuentra el nombre mapeado, busca por el nombre del archivo parcial
+            if not image:
+                print(f"[OpenStackDriver] No hallada exacta. Buscando parcial '{filename}'...")
+                for img in self.conn.compute.images():
+                    if filename in img.name.lower():
+                        image = img
+                        break
+            
+            # Fallback 2: Usar la primera disponible (Modo Pánico para Demo)
+            if not image:
+                print("[OpenStackDriver] !WARNING! Imagen no encontrada. Usando fallback (primera disponible).")
+                image = list(self.conn.compute.images())[0]
+
+            print(f"[OpenStackDriver] Imagen seleccionada: {image.name}")
+
+            # 2. Flavor y redes    
             flavor = self._get_or_create_flavor(cpus, ram_mb)
             nics = [{"port-id": pid} for pid in port_ids]
             
