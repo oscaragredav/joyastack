@@ -6,6 +6,7 @@ from config.settings import WORKERS
 from drivers.linux_drivers import create_vm_multi_vlan
 from utils.logger import log_entry
 from drivers.openstack_driver import OpenStackDriver
+from utils.ssh import SSHConnection
 
 PLACEMENT_API_BASE_URL = "http://localhost:8002/placement/slice"
 
