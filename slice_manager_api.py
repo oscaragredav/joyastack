@@ -601,9 +601,11 @@ def read_logs(db: Session = Depends(get_db), limit: int = 100):
                 LIMIT :lim
             """),
             {"lim": limit}
-        )
-        logs = [dict(row) for row in result.fetchall()]
+        ).mappings().all()
+
+        logs = [dict(row) for row in result]
         return {"logs": logs}
+
     except Exception as e:
         logger.error(f"Error fetching logs from database: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error: Could not fetch logs.")
