@@ -518,7 +518,7 @@ def delete_slice_resources(slice_id: int, db: Session):
                         # Limpiar TAPs y OvS
                         conn.exec_sudo(
                             f"ovs-vsctl list-ports br-int | grep {vm["name"]} | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
-                        conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
+                        conn.exec_sudo(f"ip link del $(ip link show | grep {vm["name"]} | cut -d: -f2) 2>/dev/null || true")
                         log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
                     except Exception as e:
                         print(f"Error creando slice: {e}")
