@@ -2,7 +2,7 @@ import requests
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from config.settings import WORKERS
+from config.settings import WORKERS, GATEWAY, SSH_USER, SSH_PASS
 from drivers.linux_drivers import create_vm_multi_vlan
 from utils.logger import log_entry
 from drivers.openstack_driver import OpenStackDriver
@@ -499,7 +499,7 @@ def delete_slice_resources(slice_id: int, db: Session):
             for vm in vms:
                 wip = vm["worker_ip"]
                 ssh_port = None
-                for name, data in WORKER_IPS.items():
+                for name, data in WORKERS.items():
                     if data["ip"] == wip:
                         ssh_port = data["ssh_port"]
                         break

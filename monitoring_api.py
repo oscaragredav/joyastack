@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 import httpx
+from sqlalchemy import text
 from sshtunnel import SSHTunnelForwarder
 import time
 import asyncio
@@ -358,3 +359,4 @@ async def health_check():
         raise HTTPException(status_code=503, detail={"status": "Service Unavailable", "details": health_status})
 
     return {"status": "ok", "details": health_status}
+

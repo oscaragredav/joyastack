@@ -77,6 +77,8 @@ def get_user_slices(payload: dict = Depends(verify_token), db: Session = Depends
     ).mappings().all()
 
     return {"user": username, "slices": [dict(r) for r in result]}
+
+
 #GET OBTENER SLICES POR ID
 @app.get("/slices/{slice_id}")
 def get_slice_by_id(slice_id: int, payload: dict = Depends(verify_token), db: Session = Depends(get_db)):
@@ -583,3 +585,23 @@ def upload_image(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         ssh_headnode.close()
+
+
+@app.get("/logs")
+def read_logs(db: Session = Depends(get_db), limit: int = 100):
+    """Endpoint para leer los últimos logs almacenados en la base de datos."""
+    try:
+        result = db.execute(
+            text("""
+                SELECT id, module, timestamp, level, message, slice_id
+                FROM logs
+                ORDER BY timestamp DESC
+                LIMIT :lim
+            """),
+            {"lim": limit}
+        )
+        logs = [dict(row) for row in result.fetchall()]
+        return {"logs": logs}
+    except Exception as e:
+        logger.error(f"Error fetching logs from database: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error: Could not fetch logs.")
