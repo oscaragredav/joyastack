@@ -184,19 +184,11 @@ def delete_vm_resources(db, vm, wip: str, ssh_port: int, slice_id=None) -> bool:
         bool: True si la limpieza tuvo éxito, False en caso contrario.
     """
 
-    # --- 1. Definición de la Conexión ---
-    # Asumo que GATEWAY, SSH_USER, SSH_PASS están definidos globalmente o pasados como argumentos
-    # Uso un placeholder para la conexión SSH ya que tu ejemplo usa 'host=GATEWAY, user=SSH_USER, password=SSH_PASS'
-
-    # Nota: Tu código usa 'worker_port' para el puerto SSH en la función create_vm_multi_vlan
-    # y 'ssh_port' aquí, pero usa 'host=GATEWAY' en el cuerpo.
-    # Por consistencia con el flujo de 'create_vm_multi_vlan' que usa 'worker_port' (y asume que es el puerto SSH),
-    # usaré 'worker_port' como nombre de variable y asumo que la conexión es local/basada en puerto.
-
     conn = SSHConnection(port=ssh_port)
     print(f"[LinuxDriver] Conectado al worker {ssh_port}")
     conn.connect()
     print(f"[LinuxDriver] Conexión establecida con el worker {ssh_port}")
+    print(f"[LinuxDriver] Conexión existente {conn.connect()}")
 
     if not conn.connect():
         print(f"[SliceManager] ERROR: No se pudo conectar al worker {wip} en el puerto {ssh_port}")
