@@ -94,14 +94,20 @@ def normalize_workers(slice_id: int, db):
     return workers_by_id
 
 
-def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
+def get_placement_from_api(slice_id: int, vms: list, user_token: str, db, platform: str = "linux"):
     """Obtiene el placement óptimo desde el API de I-GA."""
     print("[DeploymentManager] Solicitando placement óptimo al algoritmo I-GA...")
     log_entry(db, "DeploymentManager", "INFO", "Requesting optimal placement from I-GA...", slice_id)
 
 
     try:
-        url = f"{PLACEMENT_API_BASE_URL}/{slice_id}"
+        # === MODIFICACIÓN: URL DINÁMICA SEGÚN PLATAFORMA ===
+        if platform.lower() == 'openstack':
+            # Endpoint específico para OpenStack
+            url = f"http://localhost:8002/placement/openstack/slice/{slice_id}"
+        else:
+            # Endpoint original para Linux
+            url = f"{PLACEMENT_API_BASE_URL}/{slice_id}"
 
         vms_payload = []
         for vm in vms:
@@ -311,7 +317,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
         db.commit()    
 
         # Paso 3: Obtener placement del algoritmo I-GA
-        placement_data, placement_map = get_placement_from_api(slice_id, vms, user_token, db)
+        placement_data, placement_map = get_placement_from_api(slice_id, vms, user_token, db, platform)
 
         # Paso 4: Desplegar VMs
         results = []
