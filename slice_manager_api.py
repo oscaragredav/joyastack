@@ -14,8 +14,9 @@ from utils.ssh import SSHConnection
 from sqlalchemy import text
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from core.deployment_manager import deploy_slice
+from core.deployment_manager import deploy_slice, delete_slice_resources
 from utils.logger import log_entry
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -263,9 +264,13 @@ async def create_slice(
 # POST: Desplegar un slice
 # ----------------------------------------------------
 
+class DeployRequest(BaseModel):
+    platform: str = "linux"
+
 @app.post("/slices/deploy/{slice_id}")
 async def validate_deploy_slice(
         slice_id: int,
+        deploy_data: DeployRequest,
         payload: dict = Depends(verify_token),
         db: Session = Depends(get_db),
         authorization: str = Header(None)  # <-- capturamos el header Authorization
@@ -307,7 +312,7 @@ async def validate_deploy_slice(
 
     try:
         # Pasar el token a deploy_slice
-        result = deploy_slice(slice_id, db, token)
+        result = deploy_slice(slice_id, db, token, platform=deploy_data.platform)
 
         return {
             "slice_id": slice_id,
@@ -439,62 +444,13 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
     - Registra logs del proceso.
     """
     try:
-        # Obtener VMs del slice
-        vms = db.execute(
-            text("""
-                SELECT v.id, v.cpu, v.ram, v.disk, w.ip as worker_ip, w.id as worker_id
-                FROM vm v
-                JOIN worker w ON v.worker_id = w.id
-                WHERE v.slice_id = :sid
-            """),
-            {"sid": slice_id},
-        ).mappings().all()
+        
+        result = delete_slice_resources(slice_id, db)
 
-        if not vms:
-            return {"status": "not_found", "message": "No hay VMs en este slice"}
-
-        log_entry(db, "SliceManager", "INFO", f"Eliminando slice {slice_id} con {len(vms)} VMs", slice_id)
-
-        for vm in vms:
-            wip = vm["worker_ip"]
-            ssh_port = None
-            for name, data in WORKERS.items():
-                if data["ip"] == wip:
-                    ssh_port = data["ssh_port"]
-                    break
-            if not ssh_port:
-                continue
-
-            conn = SSHConnection(GATEWAY, ssh_port, SSH_USER, SSH_PASS)
-            if conn.connect():
-                try:
-                    # Matar proceso QEMU si existiese
-                    conn.exec_sudo(f"pkill -f 'qemu-system.*VM_Auto_' || true")
-                    conn.exec_sudo(f"sleep 1")
-                    # Limpiar TAPs y OvS
-                    conn.exec_sudo(
-                        f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
-                    conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
-                    log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
-                except Exception as e:
-                    print(f"Error creando slice: {e}")
-                    log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}", slice_id)
-                finally:
-                    conn.close()
-
-        # Borrar en la base de datos (orden correcto debido a FKs)
-        print(f"Eliminando registros de slice {slice_id} en BD")
-        log_entry(db, "SliceManager", "INFO",
-                  f"Eliminando registros de slice {slice_id} en BD", slice_id)
-
-        db.execute(text("DELETE FROM network_link WHERE slice_id = :sid"), {"sid": slice_id})
-        db.execute(text("DELETE FROM vm WHERE slice_id = :sid"), {"sid": slice_id})
-        db.execute(text("DELETE FROM logs WHERE slice_id = :sid"), {"sid": slice_id})
-        db.execute(text("DELETE FROM slice WHERE id = :sid"), {"sid": slice_id})
-        db.commit()
-
-        log_entry(db, "SliceManager", "INFO", f"Slice {slice_id} eliminado correctamente")
-        return {"status": "deleted", "slice_id": slice_id}
+        return {
+            "slice_id": slice_id,
+            "result": result
+        }
 
     except Exception as e:
         print(f"Error creando slice: {e}")
