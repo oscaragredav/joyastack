@@ -590,6 +590,8 @@ def upload_image(
 @app.get("/logs")
 def read_logs(db: Session = Depends(get_db), limit: int = 100):
     """Endpoint para leer los últimos logs almacenados en la base de datos."""
+    import logging
+    logger = logging.getLogger(__name__)
     try:
         result = db.execute(
             text("""
