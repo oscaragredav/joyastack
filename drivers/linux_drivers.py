@@ -173,3 +173,71 @@ def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: lis
 
     finally:
         conn.close()
+
+
+def delete_vm_resources(db, vm, wip: str, ssh_port: int, slice_id=None) -> bool:
+    """
+    Detiene el proceso QEMU y elimina los puertos OvS y las interfaces TAP
+    asociadas a una máquina virtual específica en el worker.
+
+    Returns:
+        bool: True si la limpieza tuvo éxito, False en caso contrario.
+    """
+
+    # --- 1. Definición de la Conexión ---
+    # Asumo que GATEWAY, SSH_USER, SSH_PASS están definidos globalmente o pasados como argumentos
+    # Uso un placeholder para la conexión SSH ya que tu ejemplo usa 'host=GATEWAY, user=SSH_USER, password=SSH_PASS'
+
+    # Nota: Tu código usa 'worker_port' para el puerto SSH en la función create_vm_multi_vlan
+    # y 'ssh_port' aquí, pero usa 'host=GATEWAY' en el cuerpo.
+    # Por consistencia con el flujo de 'create_vm_multi_vlan' que usa 'worker_port' (y asume que es el puerto SSH),
+    # usaré 'worker_port' como nombre de variable y asumo que la conexión es local/basada en puerto.
+
+    conn = SSHConnection(port=ssh_port)
+    print(f"[LinuxDriver] Conectado al worker {ssh_port}")
+    conn.connect()
+    print(f"[LinuxDriver] Conexión establecida con el worker {ssh_port}")
+
+    if not conn.connect():
+        print(f"[SliceManager] ERROR: No se pudo conectar al worker {wip} en el puerto {ssh_port}")
+        return False
+
+    # Si la conexión se establece:
+    try:
+        vm_name = vm['name']
+        print(f"[SliceManager] Eliminando VM {vm_name} en worker {wip}")
+
+        # --- 2. Matar proceso QEMU ---
+        # El uso de comillas simples internas ('') es la corrección de sintaxis aplicada
+        kill_cmd = f"pkill -f 'qemu-system.*{vm_name}' || true"
+        print(f"[SliceManager] Ejecutando: {kill_cmd}")
+        conn.exec_sudo(kill_cmd)
+
+        # Esperar un poco para asegurar que el sistema operativo libere los recursos TAP
+        conn.exec_sudo(f"sleep 1")
+
+        # --- 3. Limpiar TAPs de OvS (Puertos) ---
+        ovs_del_cmd = (
+            f"ovs-vsctl list-ports br-int | grep {vm_name} | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}"
+        )
+        print(f"[SliceManager] Ejecutando: {ovs_del_cmd}")
+        conn.exec_sudo(ovs_del_cmd)
+
+        # --- 4. Limpiar Interfaces TAP del SO (ip link) ---
+        ip_del_cmd = (
+            f"ip link del $(ip link show | grep {vm_name} | cut -d: -f2) 2>/dev/null || true"
+        )
+        print(f"[SliceManager] Ejecutando: {ip_del_cmd}")
+        conn.exec_sudo(ip_del_cmd)
+
+        print(f"[SliceManager] Recursos de VM {vm_name} limpiados correctamente.")
+        return True
+
+    except Exception as e:
+        print(f"Error limpiando recursos de VM: {e}")
+        print(f"[SliceManager] ERROR limpiando recursos de VM {vm_name} en worker {wip}")
+        return False
+
+    finally:
+        conn.close()
+        print(f"[SliceManager] Conexión cerrada.")

@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from config.settings import WORKERS, GATEWAY, SSH_USER, SSH_PASS
-from drivers.linux_drivers import create_vm_multi_vlan
+from drivers.linux_drivers import create_vm_multi_vlan, delete_vm_resources
 from utils.logger import log_entry
 from drivers.openstack_driver import OpenStackDriver
 from utils.ssh import SSHConnection
@@ -512,24 +512,12 @@ def delete_slice_resources(slice_id: int, db: Session):
                 if not ssh_port:
                     continue
 
-                conn = SSHConnection(host=GATEWAY, user=SSH_USER, password=SSH_PASS, port=ssh_port)
-                print(f"[SliceManager] Conexión SSH: {conn.connect()}:{conn.port}")
-                if conn.connect():
-                    try:
-                        # Matar proceso QEMU si existiese
-                        print(f"[SliceManager] Eliminando VM {vm['name']} en worker {wip}")
-                        conn.exec_sudo(f"pkill -f 'qemu-system.*{vm['name']}' || true")
-                        conn.exec_sudo(f"sleep 1")
-                        # Limpiar TAPs y OvS
-                        conn.exec_sudo(
-                            f"ovs-vsctl list-ports br-int | grep {vm['name']} | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
-                        conn.exec_sudo(f"ip link del $(ip link show | grep {vm['name']} | cut -d: -f2) 2>/dev/null || true")
-                        log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
-                    except Exception as e:
-                        print(f"Error creando slice: {e}")
-                        log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}", slice_id)
-                    finally:
-                        conn.close()
+                success = delete_vm_resources(db, vm, wip, ssh_port, slice_id)
+
+                if success:
+                    print(f"[SliceManager] Limpieza de {vm['name']} ejecutada correctamente.")
+                else:
+                    print(f"[SliceManager] Limpieza de {vm['name']} FAlló.")
 
         db.execute(text("UPDATE slice SET status = 'TERMINATED' WHERE id = :sid"), {"sid": slice_id})
         db.commit()
