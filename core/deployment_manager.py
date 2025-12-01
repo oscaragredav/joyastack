@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from config.settings import WORKERS
 from drivers.linux_drivers import create_vm_multi_vlan
 from utils.logger import log_entry
+from drivers.openstack_driver import OpenStackDriver
 
+PLACEMENT_API_BASE_URL = "http://localhost:8002/placement/slice"
 
 def generate_unique_name(db, table_name: str, base_name: str) -> str:
     """
@@ -69,7 +71,13 @@ def prepare_slice_and_vms(slice_id: int, db: Session):
         )
     db.commit()
 
-    return slice_obj, vms
+    # Obtenemos los enlaces para la topología (necesario para OpenStack)
+    links_db = db.execute(
+        text("SELECT * FROM network_link WHERE slice_id = :sid"), 
+        {"sid": slice_id}
+    ).mappings().all()
+
+    return slice_obj, vms, links_db
 
 
 def normalize_workers(slice_id: int, db):
@@ -92,6 +100,8 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
 
 
     try:
+        url = f"{PLACEMENT_API_BASE_URL}/{slice_id}"
+
         vms_payload = []
         for vm in vms:
             vms_payload.append({
@@ -107,7 +117,7 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
         log_entry(db, "DeploymentManager", "DEBUG", f"Sending payload with {len(vms_payload)} VMs", slice_id)
 
         response = requests.post(
-            f"http://localhost:8002/placement/slice/{slice_id}",
+            url,
             headers={
                 "Authorization": f"Bearer {user_token}",
                 "Content-Type": "application/json"
@@ -124,19 +134,26 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
             print(f"[DeploymentManager] Respuesta del Placement API: {response.status_code}")
             log_entry(db, "DeploymentManager", "DEBUG", f"Placement API response: {response.status_code}", slice_id)
 
-            return data
+            #Para openstack
+            vm_map = {}
+            for p in data.get("placements", []):
+                for vm_name in p.get("assigned_vms", []):
+                    vm_map[vm_name] = p
+            print(f"[Placement] OK. Decisión recibida para {len(vm_map)} VMs.")
+
+            return data, vm_map
         else:
             print(f"[PlacementAPI] Error {response.status_code}")
             print("  Usando asignación round-robin como fallback")
             log_entry(db, "PlacementAPI", "WARNING",
                       f"Placement API returned {response.status_code}. Usando round-robin.", slice_id)
-            return None
+            return {}, None
 
     except requests.exceptions.RequestException as e:
         print(f"[PlacementAPI] No disponible: {e}")
         log_entry(db, "PlacementAPI", "WARNING", f"Could not connect to Placement API: {e}. Using round-robin.",
                   slice_id)
-        return None
+        return {}, None
 
 
 def map_placements_to_workers(placement_data, workers_by_id, slice_id, db):
@@ -259,14 +276,14 @@ def deploy_vm_to_worker(vm, worker_id, config, db):
     }
 
 
-def deploy_slice(slice_id: int, db: Session, user_token: str):
+def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "linux"):
     """
     Despliega un slice utilizando el algoritmo genético de placement (I-GA)
     para asignar VMs a workers de forma óptima.
     """
     try:
         # Paso 1: Preparar slice y VMs
-        slice_obj, vms = prepare_slice_and_vms(slice_id, db)
+        slice_obj, vms, links_db = prepare_slice_and_vms(slice_id, db)
         if not vms:
             return {"message": "No hay VMs pendientes.", "results": []}
 
@@ -274,38 +291,106 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
         workers_by_id = normalize_workers(slice_id, db)
         print(f"[DeploymentManager] Workers disponibles: {list(workers_by_id.keys())}")
 
+        # Preparar lista limpia de VMs para procesos internos (OpenStack)
+        vms_to_deploy_data = []
+        for vm in vms_db:
+            image = db.execute(text("SELECT path FROM image WHERE id = :iid"), {"iid": vm["image_id"]}).mappings().first()
+            vms_to_deploy_data.append({
+                "id": vm["id"], 
+                "name": vm["name"], 
+                "cpu": vm["cpu_cores"],
+                "ram": vm["ram_gb"], 
+                "disk": vm["storage_gb"],
+                "image_ref": image["path"] if image else "cirros"
+            })
+
+        # ACTUALIZAR PLATAFORMA (Necesario para el Placement)
+        db.execute(text("UPDATE slice SET platform = :plat WHERE id = :sid"), {"plat": platform, "sid": slice_id})
+        db.commit()    
+
         # Paso 3: Obtener placement del algoritmo I-GA
-        placement_data = get_placement_from_api(slice_id, vms, user_token, db)
-        vm_to_worker = map_placements_to_workers(placement_data, workers_by_id, slice_id, db)
+        placement_data, placement_map = get_placement_from_api(slice_id, vms, user_token, db)
 
         # Paso 4: Desplegar VMs
         results = []
-        for i, vm in enumerate(vms):
-            # Determinar worker (algoritmo o round-robin)
-            print(f"\n[DeploymentManager] Desplegando VM: {vm['name']}")
-            log_entry(db, "DeploymentManager", "INFO", f"Deploying VM: {vm['name']}", slice_id)
 
-            if vm["name"] in vm_to_worker:
-                worker_id = vm_to_worker[vm["name"]]
-                print(f"  ✓ Usando I-GA: Worker {worker_id}")
-            else:
-                worker_id = (i % len(workers_by_id)) + 1
-                print(f"  ⚠ Usando asignación round-robin: Worker {worker_id}")
-                log_entry(db, "DeploymentManager", "WARNING", f"Using round-robin: Worker {worker_id}", slice_id)
+        # =================================================================
+        # === BLOQUE LÓGICO PARA OPENSTACK ===
+        # =================================================================
+        if platform.lower() == 'openstack':
+            print(f"[Deploy] Iniciando OpenStack para Slice {slice_id}")
+            os_driver = OpenStackDriver()
+            
+            # a. Crear Proyecto y Topología Base
+            project_id = os_driver.create_project(slice_obj['name'])
+            base_topo = os_driver.create_topology(project_id, slice_obj['name'])
+            
+            # b. Gestión de Puertos y Redes
+            vm_ports_map = {vm['id']: [] for vm in vms_to_deploy_data}
+            
+            # Puertos de Gestión (Internet/SSH)
+            for vm in vms_to_deploy_data:
+                p_id = os_driver.create_port(base_topo['mgmt_network_id'], project_id, base_topo['mgmt_sec_group_id'], f"mgmt_{vm['name']}")
+                vm_ports_map[vm['id']].append(p_id)
 
-            # Validar worker
-            if worker_id not in workers_by_id:
-                print(f"  ✗ Worker {worker_id} no existe. Usando Worker 1 como fallback")
-                log_entry(db, "DeploymentManager", "ERROR", f"Worker {worker_id} does not exist. Using Worker 1.", slice_id)
-                worker_id = 1
+            # Puertos de Topología L2 (Enlaces internos)
+            for i, link in enumerate(links_db):
+                l2_net_id = os_driver.create_l2_network(project_id, f"L2_{link['source_vm_id']}_{link['target_vm_id']}")
+                if link['source_vm_id'] in vm_ports_map:
+                    vm_ports_map[link['source_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_src"))
+                if link['target_vm_id'] in vm_ports_map:
+                    vm_ports_map[link['target_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_dst"))
 
-            if worker_id not in workers_by_id:
-                raise Exception(f"Worker {worker_id} no configurado")
+            # c. Despliegue de Instancias
+            for vm in vms_to_deploy_data:
+                # Obtener Zona de Disponibilidad desde Placement (R4)
+                vm_decision = placement_map.get(vm["name"], {})
+                target_az = vm_decision.get("availability_zone", "nova") 
+                
+                res = os_driver.deploy_vm(
+                    project_id=project_id,
+                    vm_name=vm["name"],
+                    image_ref=vm["image_ref"],
+                    cpus=vm["cpu"],
+                    ram_mb=int(vm["ram"] * 1024),
+                    port_ids=vm_ports_map[vm['id']],
+                    availability_zone=target_az 
+                )
+                db.execute(text("UPDATE vm SET console_access = :ip WHERE id = :vid"), {"ip": res["ip"], "vid": vm["id"]})
+                results.append({**res, "vm_name": vm["name"], "availability_zone": target_az})
 
-            # Preparar y desplegar
-            config = get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db)
-            result = deploy_vm_to_worker(vm, worker_id, config, db)
-            results.append(result)
+        # =================================================================
+        # === BLOQUE LINUX ===
+        # =================================================================
+        else:
+            # Para Linux
+            vm_to_worker = map_placements_to_workers(placement_data, workers_by_id, slice_id, db)
+            for i, vm in enumerate(vms):
+                # Determinar worker (algoritmo o round-robin)
+                print(f"\n[DeploymentManager] Desplegando VM: {vm['name']}")
+                log_entry(db, "DeploymentManager", "INFO", f"Deploying VM: {vm['name']}", slice_id)
+
+                if vm["name"] in vm_to_worker:
+                    worker_id = vm_to_worker[vm["name"]]
+                    print(f"  ✓ Usando I-GA: Worker {worker_id}")
+                else:
+                    worker_id = (i % len(workers_by_id)) + 1
+                    print(f"  ⚠ Usando asignación round-robin: Worker {worker_id}")
+                    log_entry(db, "DeploymentManager", "WARNING", f"Using round-robin: Worker {worker_id}", slice_id)
+
+                # Validar worker
+                if worker_id not in workers_by_id:
+                    print(f"  ✗ Worker {worker_id} no existe. Usando Worker 1 como fallback")
+                    log_entry(db, "DeploymentManager", "ERROR", f"Worker {worker_id} does not exist. Using Worker 1.", slice_id)
+                    worker_id = 1
+
+                if worker_id not in workers_by_id:
+                    raise Exception(f"Worker {worker_id} no configurado")
+
+                # Preparar y desplegar
+                config = get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db)
+                result = deploy_vm_to_worker(vm, worker_id, config, db)
+                results.append(result)
 
 
         # Paso 5: Finalizar
@@ -343,3 +428,27 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
         log_entry(db, "DeploymentManager", "ERROR", f"Deployment error: {e}", slice_id)
         db.rollback()
         raise e
+
+# === FUNCIÓN DE BORRADO ===
+def delete_slice_resources(slice_id: int, db: Session):
+    try:
+        slice_obj = db.execute(text("SELECT * FROM slice WHERE id = :sid"), {"sid": slice_id}).mappings().first()
+        if not slice_obj: raise HTTPException(status_code=404, detail="Slice no encontrado")
+
+        platform = slice_obj.get("platform", "linux") 
+        print(f"[Delete] Eliminando Slice {slice_id} en plataforma: {platform}")
+
+        if platform == 'openstack':
+            os_driver = OpenStackDriver()
+            os_driver.delete_slice_resources(slice_obj['name'])
+        else:
+            # Aquí mantienes la lógica de borrado de Linux existente
+            pass
+
+        db.execute(text("UPDATE slice SET status = 'TERMINATED' WHERE id = :sid"), {"sid": slice_id})
+        db.commit()
+        return {"status": "success", "message": f"Slice {slice_id} eliminado"}
+
+    except Exception as e:
+        log_entry(db, "DeploymentManager", "ERROR", str(e), slice_id)
+        raise HTTPException(status_code=500, detail=str(e))        
