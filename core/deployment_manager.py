@@ -219,8 +219,9 @@ def map_placements_to_workers(placement_data, workers_by_id, slice_id, db):
 
 def get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db):
     """Prepara la configuración para desplegar una VM."""
-    vnc_port = (worker_id * 10000) + (slice_id % 100 * 100) + (vm["id"] % 100)
+    vnc_port = (worker_id * 1000) + (slice_id % 100 * 100) + (vm["id"] % 100)
     worker_port = workers_by_id[worker_id]["ssh_port"]
+    print(f"[DeploymentManager] VM '{vm['name']}' VNC Port: {vnc_port}, Worker SSH Port: {worker_port}")
 
     image = db.execute(
         text("SELECT * FROM image WHERE id = :iid"),
@@ -236,6 +237,7 @@ def get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db):
         {"sid": slice_id, "vid": vm["id"]}
     ).mappings().all()
     vlans = [l["vlan_id"] for l in links]
+    print(f"[DeploymentManager] VM '{vm['name']}' VLANs: {vlans}")
 
     return {
         "worker_port": worker_port,
@@ -248,6 +250,7 @@ def get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db):
 def deploy_vm_to_worker(vm, worker_id, config, db):
     """Despliega una VM en un worker específico."""
     print(f"[Deploy] VM '{vm['name']}' -> Worker {worker_id}")
+    print(f"[Deploy] Config: VNC Port {config['vnc_port']}, VLANs {config['vlans']}, Image {config['image_path']}")
 
     res = create_vm_multi_vlan(
         config["worker_port"],

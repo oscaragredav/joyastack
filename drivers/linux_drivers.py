@@ -157,6 +157,7 @@ def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: lis
                         pid = int(pid_str)
                     except ValueError:
                         pass
+        print(f"[LinuxDriver] PID extraído: {pid}")
 
         success = stderr == "" and "creada correctamente" in stdout
 
