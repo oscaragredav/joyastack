@@ -504,6 +504,7 @@ def delete_slice_resources(slice_id: int, db: Session):
                 ssh_port = None
                 for name, data in WORKERS.items():
                     print(f"[SliceManager] Comprobando worker {name} ({data['ip']})")
+                    print(f"[SliceManager] Comparando con IP de VM: {wip}")
                     if data["ip"] == wip:
                         ssh_port = data["ssh_port"]
                         print(f"[SliceManager] Conectando a worker {name} ({wip}:{ssh_port}) para eliminar VM")
