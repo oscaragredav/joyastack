@@ -119,8 +119,9 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
         if response.status_code == 200:
             data = response.json()
             print(f"[PlacementAPI] Placement exitoso - Fitness: {data.get('fitness_score')}")
+            # Reemplazar la línea de log por:
             log_entry(db, "PlacementAPI", "INFO",
-                      f"Placement obtained. Fitness: {data.get['fitness_score']}", slice_id)
+                      f"Placement obtained. Fitness: {data['fitness_score']}", slice_id)
             print(f"[DeploymentManager] Respuesta del Placement API: {response.status_code}")
             log_entry(db, "DeploymentManager", "DEBUG", f"Placement API response: {response.status_code}", slice_id)
 

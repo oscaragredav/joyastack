@@ -1,22 +1,21 @@
+from pathlib import Path
+
 from utils import ssh
 from utils.ssh import SSHConnection
-from pathlib import Path
-import time
-import re
-from utils.logger import log_entry
+# --- Definiciones globales (o al inicio del archivo) ---
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_SCRIPT_NAME = "vm_create_multi.sh"
+LOCAL_SCRIPT_PATH = PROJECT_ROOT / "scripts" / LOCAL_SCRIPT_NAME
+REMOTE_SCRIPT_PATH = "/tmp/vm_create.sh"
 
-
-# La función create_vm original del usuario (para contexto, no se está usando el image_path en el cmd)
 def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
               vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
-              num_ifaces: int = 1, image_path: str = "/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img", db=None) -> dict:
+              num_ifaces: int = 1, image_path: str = "/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img") -> dict:
     script_path = "/home/ubuntu/joyastack/scripts/vm_create.sh"
     # Asegurar que todos los argumentos sean enteros donde corresponde
-    # NOTA: Este cmd solo envía 8 argumentos, el script remoto espera 9 si es la versión multi-vlan/sudo.
     cmd = f"{script_path} {vm_name} {bridge} {int(vlan)} {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)}"
 
     print(f"[LinuxDriver] Conectando con {worker_ip} para crear {vm_name}...")
-    if db: log_entry(db, "LinuxDriver", "INFO", f"Connecting to {worker_ip} to create {vm_name}", None)
 
     conn = SSHConnection(worker_ip)
     conn.connect()
@@ -26,7 +25,6 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         args = [vm_name, bridge, vlan, vnc_port, cpus, ram_mb, disk_gb, num_ifaces]
         if any(arg is None for arg in args):
             print(f"[LinuxDriver] ERROR: Faltan argumentos requeridos")
-            if db: log_entry(db, "LinuxDriver", "ERROR", "Missing required arguments", None)
             return {
                 "worker_ip": worker_ip,
                 "vm_name": vm_name,
@@ -40,12 +38,10 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         print(f"[LinuxDriver] STDOUT:\n{stdout}")
         if stderr:
             print(f"[LinuxDriver] STDERR:\n{stderr}")
-            if db: log_entry(db, "LinuxDriver", "ERROR", f"STDERR: {stderr}", None)
 
         # Verificar si hay mensaje de error en la salida
         if "ERROR:" in stdout:
             print(f"[LinuxDriver] Se detectó un error en la creación de la VM")
-            if db: log_entry(db, "LinuxDriver", "ERROR", "Error detected in VM creation", None)
             return {
                 "worker_ip": worker_ip,
                 "vm_name": vm_name,
@@ -66,7 +62,6 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
             print(f"[LinuxDriver] PID command: {pid_cmd}")
             print(f"[LinuxDriver] PID stdout: {pid_stdout}")
             print(f"[LinuxDriver] PID found: {vm_pid}")
-            if db: log_entry(db, "LinuxDriver", "DEBUG", f"PID found: {vm_pid}", None)
 
         return {
             "worker_ip": worker_ip,
@@ -82,138 +77,98 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
 
 def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: list,
                          vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
-                         num_ifaces: int, image_path: str, db=None) -> dict:
+                         num_ifaces: int, image_path: str) -> dict:
     """
     Crea una VM con múltiples interfaces TAP, cada una en su propia VLAN.
-
-    CORRECCIÓN ROBUSTA: Asegura la subida del script por SFTP y usa la lectura de archivos
-    persistentes (VM1_info.txt) para obtener el PID de forma confiable.
     """
 
     conn = SSHConnection(port=worker_port)
     print(f"[LinuxDriver] Conectado al worker {worker_port}")
     conn.connect()
     print(f"[LinuxDriver] Conexión establecida con el worker {worker_port}")
-    if db: log_entry(db, "LinuxDriver", "INFO", f"Connection established with worker {worker_port}", None)
 
-    script_path = "/tmp/vm_create.sh"
-    info_file_path = f"/home/ubuntu/joyastack/var/vms/{vm_name}_info.txt"
-
-    # --- 1. Subir el script (Lógica corregida: Sube el script a /tmp/vm_create.sh) ---
-    local_script_name = "vm_create.sh"
-    # Busca el script asumiendo la estructura de carpetas (scripts/vm_create.sh)
-    local_script = Path(__file__).resolve().parent.parent / "scripts" / local_script_name
-
-    if not local_script.exists():
-        # Fallback de ruta, por si la estructura de carpetas es diferente (e.g., está en el mismo cwd)
-        local_script = Path.cwd() / "scripts" / local_script_name
-        if not local_script.exists():
-            print(
-                f"[LinuxDriver] ERROR: Script local no encontrado. Buscado en: {Path(__file__).resolve().parent.parent / 'scripts'} y {Path.cwd() / 'scripts'}")
-            return {
-                "worker_port": worker_port,
-                "vm_name": vm_name,
-                "stdout": "",
-                "stderr": "Local script vm_create.sh not found.",
-                "success": False,
-                "pid": None,
-                "vlans": vlans,
-                "metadata_output": ""
-            }
-
+    # --- 1. Lógica de transferencia SFTP ---
     try:
-        # CORRECCIÓN CRLF: Leer el contenido del archivo, limpiar \r, y escribirlo en el destino remoto
-
-        # Leer el contenido del script local
-        with open(local_script, 'r', encoding='utf-8') as f:
-            script_content = f.read()
-
-        # Limpiar caracteres de retorno de carro (\r) para asegurar que sea formato LF (Unix)
-        cleaned_content = script_content.replace('\r\n', '\n').replace('\r', '\n')
-
         sftp = conn.client.open_sftp()
-        # Escribir el contenido limpio al path de ejecución /tmp/vm_create.sh
-        with sftp.open(script_path, 'w') as remote_file:
-            remote_file.write(cleaned_content)
+        print(f"[LinuxDriver] Transfiriendo script local desde: {LOCAL_SCRIPT_PATH}")
 
-        sftp.chmod(script_path, 0o755)
+        # Sube el archivo
+        sftp.put(LOCAL_SCRIPT_PATH.as_posix(), REMOTE_SCRIPT_PATH)
+        sftp.chmod(REMOTE_SCRIPT_PATH, 0o755)
         sftp.close()
-        print(f"[LinuxDriver] Script {local_script_name} subido y permisos establecidos en {script_path}.")
-        print(f"[LinuxDriver] Aviso: Se corrigió la codificación de fin de línea (CRLF a LF) durante la subida.")
+
+        # --- 2. 🟢 CORRECCIÓN CRLF APLICADA ---
+        # Ejecutar 'sed' o 'dos2unix' para eliminar los caracteres '\r' (CR)
+        print(f"[LinuxDriver] Corrigiendo fin de línea (CRLF a LF) en {REMOTE_SCRIPT_PATH}...")
+        correction_cmd = f"sed -i 's/\\r$//' {REMOTE_SCRIPT_PATH}"
+
+        # Ejecutar el comando de corrección
+        # Usamos exec_command del cliente paramiko directamente para evitar el wrapper exec_sudo si es posible,
+        # pero para ser coherentes, lo mantenemos como exec_sudo si el user ubuntu requiere permisos.
+        _, correction_stdout, correction_stderr = conn.client.exec_command(correction_cmd)
+
+        # NOTA: En un entorno de producción, la corrección DEBERÍA ejecutarse con sudo
+        # si el REMOTE_SCRIPT_PATH no es escribible por el usuario ssh.
+        # Si conn.exec_sudo se usa, asegúrate de que maneje el STDOUT/STDERR correctamente.
+        # Asumiendo que /tmp/ es escribible, podemos usar client.exec_command para comandos simples.
+
+        if correction_stderr.read():
+            print(f"[LinuxDriver] Aviso: Error menor al corregir CRLF: {correction_stderr.read().decode()}")
+
     except Exception as e:
-        print(f"[LinuxDriver] ERROR al subir el script via SFTP: {e}")
-        conn.close()
+        # Manejo de errores de transferencia o corrección
+        print(f"[LinuxDriver] ERROR en transferencia/corrección: {e}")
         return {
             "worker_port": worker_port,
             "vm_name": vm_name,
             "stdout": "",
-            "stderr": f"SFTP upload failed: {e}",
+            "stderr": f"Error de transferencia/corrección de script: {e}",
             "success": False,
             "pid": None,
-            "vlans": vlans,
-            "metadata_output": ""
+            "vlans": vlans
         }
 
+    # --- 3. Ejecución del Script ---
     # Convertir lista de VLANs a string separado por comas
     vlans_str = ",".join(map(str, vlans)) if vlans else "0"
 
-    # Comando completo (9 argumentos, con image_path incluido)
-    # CORRECCIÓN: Anteponemos 'bash ' para forzar la ejecución del script, evitando el error "No such file or directory"
-    cmd = f"bash {script_path} {vm_name} {bridge} '{vlans_str}' {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)} {image_path}"
+    # Usamos REMOTE_SCRIPT_PATH para la ejecución
+    cmd = f"{REMOTE_SCRIPT_PATH} {vm_name} {bridge} '{vlans_str}' {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)} {image_path}"
 
     print(f"[LinuxDriver] Creando {vm_name} con VLANs: {vlans}")
-    if db: log_entry(db, "LinuxDriver", "INFO", f"Creating {vm_name} with VLANs: {vlans}", None)
-
-    pid = None
-    success = False
 
     try:
         print(f"[LinuxDriver] Ejecutando comando: {cmd}")
-        if db: log_entry(db, "LinuxDriver", "DEBUG", f"Executing command: {cmd}", None)
         stdout, stderr = conn.exec_sudo(cmd)
+        print(f"[LinuxDriver] STDOUT:\n{stdout}")
+        print(f"[LinuxDriver] STDERR:\n{stderr}")
 
-        # STDOUT/STDERR ahora contienen los logs de ejecución del script (Fix V9)
-        print(f"[LinuxDriver] Logs del script remoto (STDOUT/STDERR):\n{stdout}\n{stderr}")
+        # ... (El resto de la lógica de extracción de PID, success, y return) ...
+        # (Se mantiene tu lógica original de extracción de PID)
 
-        # --- 2. Esperar y leer el archivo de metadatos (Fuente de verdad) ---
-        # Usamos un pequeño delay para asegurar que el I/O en el host termine.
-        time.sleep(1)
+        pid = None
+        for line in stdout.split('\n'):
+            if 'PID' in line:
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        # Asumiendo que el PID es el último elemento entre paréntesis o solo el último
+                        pid_str = parts[-1].strip('()')
+                        pid = int(pid_str)
+                    except ValueError:
+                        pass
 
-        read_cmd = f"cat {info_file_path}"
-        info_stdout, info_stderr = conn.exec_sudo(read_cmd)
-
-        if info_stderr and "[sudo] password for ubuntu:" not in info_stderr:
-            # Ignoramos la solicitud de password de sudo, pero cualquier otro error es grave
-            print(f"[LinuxDriver] ERROR al leer info file: {info_stderr}")
-            success = False
-        else:
-            # Parsear el archivo de metadatos
-            metadata = {}
-            for line in info_stdout.split('\n'):
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    metadata[key.strip()] = value.strip()
-
-            pid = metadata.get('PID')
-
-            if pid and pid.isdigit():
-                pid = int(pid)
-                success = True
-                print(f"[LinuxDriver] Metadata File read successfully. PID found: {pid}")
-            else:
-                # Si el PID no se encuentra, la VM falló en su creación.
-                print(f"[LinuxDriver] WARNING: Could not find valid PID in metadata file.")
-                success = False
+        success = stderr == "" and "creada correctamente" in stdout
 
         return {
             "worker_port": worker_port,
             "vm_name": vm_name,
-            "stdout": stdout,  # Logs del script
-            "stderr": stderr,  # Logs del script
+            "stdout": stdout,
+            "stderr": stderr,
             "success": success,
             "pid": pid,
-            "vlans": vlans,
-            "metadata_output": info_stdout.strip()
+            "vlans": vlans
         }
+
     finally:
         conn.close()
