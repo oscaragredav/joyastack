@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from config.settings import WORKERS
 from drivers.linux_drivers import create_vm_multi_vlan
+from utils.logger import log_entry
 
 
 def generate_unique_name(db, table_name: str, base_name: str) -> str:
@@ -67,6 +68,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
         db.commit()
         db.expunge_all()
         print("[DeploymentManager] Nombres únicos generados para Slice y VMs.")
+        log_entry(db, "DeploymentManager", "INFO", "Unique names generated for Slice and VMs", slice_id)
 
         for vm in vms:
             new_vm_name = generate_unique_name(db, "vm", vm["name"])
@@ -86,6 +88,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             workers_by_id[worker_num] = data
 
         print(f"[DeploymentManager] Workers normalizados: {workers_by_id}")
+        log_entry(db, "DeploymentManager", "DEBUG", f"Workers normalized: {workers_by_id}", slice_id)
 
         # ============================================
         # PASO 2: Obtener placement óptimo desde API
@@ -95,6 +98,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
         try:
             print("[DeploymentManager] Solicitando placement óptimo al algoritmo I-GA...")
+            log_entry(db, "DeploymentManager", "INFO", "Requesting optimal placement from I-GA...", slice_id)
 
             # Enviar las VMs en el body del request
             vms_payload = []
@@ -109,6 +113,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
             print(f"[DeploymentManager] Enviando payload con {len(vms_payload)} VMs al Placement API")
             print(f"[DeploymentManager] Payload: {vms_payload}")
+            log_entry(db, "DeploymentManager", "DEBUG", f"Sending payload with {len(vms_payload)} VMs", slice_id)
 
             placement_response = requests.post(
                 f"http://localhost:8002/placement/slice/{slice_id}",
@@ -121,6 +126,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             )
 
             print(f"[DeploymentManager] Respuesta del Placement API: {placement_response.status_code}")
+            log_entry(db, "DeploymentManager", "DEBUG", f"Placement API response: {placement_response.status_code}", slice_id)
 
             if placement_response.status_code == 200:
                 placement_data = placement_response.json()
@@ -128,6 +134,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
                 print(f"  - Energía total: {placement_data['total_energy']}")
                 print(f"  - Disponibilidad: {placement_data['total_availability']}")
                 print(f"  - Fitness score: {placement_data['fitness_score']}")
+                log_entry(db, "DeploymentManager", "INFO", f"Placement obtained. Fitness: {placement_data['fitness_score']}", slice_id)
 
                 if "placements" in placement_data:
                     for host_placement in placement_data["placements"]:
@@ -175,16 +182,20 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
                             print(
                                 f"[DeploymentManager] VM '{vm_name}' => Worker {worker_id} (from host_id={host_id})"
                             )
+                            log_entry(db, "DeploymentManager", "INFO", f"VM '{vm_name}' => Worker {worker_id}", slice_id)
                 else:
                     print("[DeploymentManager] WARNING: 'placements' no presente en respuesta")
+                    log_entry(db, "DeploymentManager", "WARNING", "'placements' not found in response", slice_id)
 
             else:
                 print(f"[DeploymentManager] WARNING: Placement API retornó {placement_response.status_code}")
                 print("  Usando asignación round-robin como fallback")
+                log_entry(db, "DeploymentManager", "WARNING", f"Placement API returned {placement_response.status_code}. Using round-robin.", slice_id)
 
         except requests.exceptions.RequestException as e:
             print(f"[DeploymentManager] WARNING: No se pudo conectar con Placement API: {e}")
             print("  Usando asignación round-robin como fallback")
+            log_entry(db, "DeploymentManager", "WARNING", f"Could not connect to Placement API: {e}. Using round-robin.", slice_id)
 
         # ============================================
         # PASO 3: Desplegar las VMs
@@ -193,6 +204,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
         for i, vm in enumerate(vms):
             print(f"\n[DeploymentManager] Desplegando VM: {vm['name']}")
+            log_entry(db, "DeploymentManager", "INFO", f"Deploying VM: {vm['name']}", slice_id)
 
             if vm["name"] in vm_to_worker:
                 worker_id = vm_to_worker[vm["name"]]
@@ -200,10 +212,12 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             else:
                 worker_id = (i % len(workers_by_id)) + 1
                 print(f"  ⚠ Usando asignación round-robin: Worker {worker_id}")
+                log_entry(db, "DeploymentManager", "WARNING", f"Using round-robin: Worker {worker_id}", slice_id)
 
             # Validar que el worker existe
             if worker_id not in workers_by_id:
                 print(f"  ✗ Worker {worker_id} no existe. Usando Worker 1 como fallback")
+                log_entry(db, "DeploymentManager", "ERROR", f"Worker {worker_id} does not exist. Using Worker 1.", slice_id)
                 worker_id = 1
 
             # Verificar nuevamente después del fallback
@@ -231,7 +245,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
             res = create_vm_multi_vlan(
                 worker_port, vm["name"], "br-int", vlans, vnc_port,
-                vm["cpu"], vm["ram"], vm["disk"], vm["num_interfaces"], image_path=image_path
+                vm["cpu"], vm["ram"], vm["disk"], vm["num_interfaces"], image_path=image_path, db=db
             )
 
             new_state = "DESPLEGADO" if res["success"] else "ERROR"
@@ -285,5 +299,6 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
     except Exception as e:
         print(f"[DeploymentManager] ERROR: {e}")
+        log_entry(db, "DeploymentManager", "ERROR", f"Deployment error: {e}", slice_id)
         db.rollback()
         raise e

@@ -3,18 +3,20 @@ from utils.ssh import SSHConnection
 from pathlib import Path
 import time
 import re
+from utils.logger import log_entry
 
 
 # La función create_vm original del usuario (para contexto, no se está usando el image_path en el cmd)
 def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
               vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
-              num_ifaces: int = 1, image_path: str = "/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img") -> dict:
+              num_ifaces: int = 1, image_path: str = "/home/ubuntu/images/cirros-0.6.2-x86_64-disk.img", db=None) -> dict:
     script_path = "/home/ubuntu/joyastack/scripts/vm_create.sh"
     # Asegurar que todos los argumentos sean enteros donde corresponde
     # NOTA: Este cmd solo envía 8 argumentos, el script remoto espera 9 si es la versión multi-vlan/sudo.
     cmd = f"{script_path} {vm_name} {bridge} {int(vlan)} {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)}"
 
     print(f"[LinuxDriver] Conectando con {worker_ip} para crear {vm_name}...")
+    if db: log_entry(db, "LinuxDriver", "INFO", f"Connecting to {worker_ip} to create {vm_name}", None)
 
     conn = SSHConnection(worker_ip)
     conn.connect()
@@ -24,6 +26,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         args = [vm_name, bridge, vlan, vnc_port, cpus, ram_mb, disk_gb, num_ifaces]
         if any(arg is None for arg in args):
             print(f"[LinuxDriver] ERROR: Faltan argumentos requeridos")
+            if db: log_entry(db, "LinuxDriver", "ERROR", "Missing required arguments", None)
             return {
                 "worker_ip": worker_ip,
                 "vm_name": vm_name,
@@ -37,10 +40,12 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
         print(f"[LinuxDriver] STDOUT:\n{stdout}")
         if stderr:
             print(f"[LinuxDriver] STDERR:\n{stderr}")
+            if db: log_entry(db, "LinuxDriver", "ERROR", f"STDERR: {stderr}", None)
 
         # Verificar si hay mensaje de error en la salida
         if "ERROR:" in stdout:
             print(f"[LinuxDriver] Se detectó un error en la creación de la VM")
+            if db: log_entry(db, "LinuxDriver", "ERROR", "Error detected in VM creation", None)
             return {
                 "worker_ip": worker_ip,
                 "vm_name": vm_name,
@@ -61,6 +66,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
             print(f"[LinuxDriver] PID command: {pid_cmd}")
             print(f"[LinuxDriver] PID stdout: {pid_stdout}")
             print(f"[LinuxDriver] PID found: {vm_pid}")
+            if db: log_entry(db, "LinuxDriver", "DEBUG", f"PID found: {vm_pid}", None)
 
         return {
             "worker_ip": worker_ip,
@@ -76,7 +82,7 @@ def create_vm(worker_ip: str, vm_name: str, bridge: str, vlan: int,
 
 def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: list,
                          vnc_port: int, cpus: int, ram_mb: int, disk_gb: int,
-                         num_ifaces: int, image_path: str) -> dict:
+                         num_ifaces: int, image_path: str, db=None) -> dict:
     """
     Crea una VM con múltiples interfaces TAP, cada una en su propia VLAN.
 
@@ -88,6 +94,7 @@ def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: lis
     print(f"[LinuxDriver] Conectado al worker {worker_port}")
     conn.connect()
     print(f"[LinuxDriver] Conexión establecida con el worker {worker_port}")
+    if db: log_entry(db, "LinuxDriver", "INFO", f"Connection established with worker {worker_port}", None)
 
     script_path = "/tmp/vm_create.sh"
     info_file_path = f"/home/ubuntu/joyastack/var/vms/{vm_name}_info.txt"
@@ -155,13 +162,14 @@ def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: lis
     cmd = f"bash {script_path} {vm_name} {bridge} '{vlans_str}' {int(vnc_port)} {int(cpus)} {int(ram_mb)} {int(disk_gb)} {int(num_ifaces)} {image_path}"
 
     print(f"[LinuxDriver] Creando {vm_name} con VLANs: {vlans}")
+    if db: log_entry(db, "LinuxDriver", "INFO", f"Creating {vm_name} with VLANs: {vlans}", None)
 
     pid = None
     success = False
 
     try:
         print(f"[LinuxDriver] Ejecutando comando: {cmd}")
-        # La ejecución retorna casi inmediatamente debido a 'nohup &'.
+        if db: log_entry(db, "LinuxDriver", "DEBUG", f"Executing command: {cmd}", None)
         stdout, stderr = conn.exec_sudo(cmd)
 
         # STDOUT/STDERR ahora contienen los logs de ejecución del script (Fix V9)

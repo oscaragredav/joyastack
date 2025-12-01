@@ -15,6 +15,7 @@ from sqlalchemy import text
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from core.deployment_manager import deploy_slice
+from utils.logger import log_entry
 
 load_dotenv()
 
@@ -31,21 +32,7 @@ app.add_middleware(
 )
 
 
-def log_entry(db, module, level, message, slice_id):
-    db.execute(
-        text("""
-            INSERT INTO logs (module, timestamp, level, message, slice_id)
-            VALUES (:m, :ts, :lvl, :msg, :sid)
-        """),
-        {
-            "m": module,
-            "ts": datetime.utcnow(),
-            "lvl": level,
-            "msg": message,
-            "sid": slice_id
-        },
-    )
-    db.commit()
+
 
 
 # ----------------------------------------------------
@@ -267,6 +254,7 @@ async def create_slice(
 
     except Exception as e:
         print(f"Error creando slice: {e}")
+        log_entry(db, "SliceManager", "ERROR", f"Error creando slice: {e}", None)
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear slice: {str(e)}")
 
@@ -329,6 +317,7 @@ async def validate_deploy_slice(
 
     except Exception as e:
         print(f"Error creando slice: {e}")
+        log_entry(db, "SliceManager", "ERROR", f"Error desplegando slice: {e}", slice_id)
         raise HTTPException(
             status_code=500,
             detail=f"Error al desplegar slice: {str(e)}"
@@ -433,8 +422,8 @@ async def update_slice(
 
     except Exception as e:
         print(f"Error creando slice: {e}")
+        log_entry(db, "SliceManager", "ERROR", f"Error actualizando slice {slice_id}: {e}", slice_id)
         db.rollback()
-        log_entry(db, "SliceManager", "ERROR", f"Error actualizando slice {slice_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error al actualizar slice: {str(e)}")
 
 
@@ -489,7 +478,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
                     log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
                 except Exception as e:
                     print(f"Error creando slice: {e}")
-                    log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}")
+                    log_entry(db, "SliceManager", "ERROR", f"Error limpiando worker {wip}: {e}", slice_id)
                 finally:
                     conn.close()
 
@@ -507,7 +496,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
     except Exception as e:
         print(f"Error creando slice: {e}")
         db.rollback()
-        log_entry(db, "SliceManager", "ERROR", f"Error eliminando slice: {e}")
+        log_entry(db, "SliceManager", "ERROR", f"Error eliminando slice: {e}", slice_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -573,6 +562,7 @@ def upload_image(
         # Si existe imagen previa => eliminar remoto y registro
         if existing:
             print(f"✳️  Reemplazando imagen existente: {filename}")
+            log_entry(db, "ImageManager", "INFO", f"Reemplazando imagen existente: {filename}", None)
             try:
                 sftp.remove(remote_path)
             except Exception:
@@ -629,6 +619,7 @@ def upload_image(
 
     except Exception as e:
         print(f"Error creando slice: {e}")
+        log_entry(db, "ImageManager", "ERROR", f"Error subiendo imagen: {e}", None)
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:

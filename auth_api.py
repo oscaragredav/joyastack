@@ -11,6 +11,7 @@ import hashlib
 import os
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from utils.logger import log_entry
 
 # ----------------------------------------------------------
 # CONFIGURACIÓN
@@ -73,5 +74,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token_data = {"sub": user["username"], "role": user["role"]}
     token = create_access_token(token_data)
     print(token)
+    log_entry(db, "AuthAPI", "INFO", f"Token generado para usuario: {user['username']}", None)
 
     return {"access_token": token, "token_type": "bearer", "role": user["role"]}
