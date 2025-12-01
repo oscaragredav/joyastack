@@ -205,7 +205,8 @@ def delete_vm_resources(vm, wip: str, worker_port: int, slice_id=None) -> bool:
 
         # --- 3. Limpiar TAPs de OvS (Puertos) ---
         ovs_del_cmd = (
-            f"ovs-vsctl list-ports br-int | grep {vm_name} | xargs -r -I{{}} sudo ovs-vsctl del-port br-int {{}}"
+            f"ovs_ports=$(ovs-vsctl list-ports br-int | grep {vm_name}); "
+            f"for port in $ovs_ports; do sudo ovs-vsctl del-port br-int $port; done"
         )
         print(f"[SliceManager] Ejecutando: {ovs_del_cmd}")
         conn.exec_sudo(ovs_del_cmd)
