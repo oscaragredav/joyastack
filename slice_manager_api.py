@@ -33,9 +33,6 @@ app.add_middleware(
 )
 
 
-
-
-
 # ----------------------------------------------------
 # Dependencia para validarToken
 # ----------------------------------------------------
@@ -50,6 +47,7 @@ def verify_token(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Token inválido")
 
     return payload
+
 
 # ----------------------------------------------------
 # GET: todos los slices de un usuario + VM
@@ -139,6 +137,8 @@ def get_slice_by_id(slice_id: int, payload: dict = Depends(verify_token), db: Se
 
     logger.info(f"⏱️ Total completado en: {time.time() - start:.2f}s")
     return result
+
+
 # ----------------------------------------------------
 # POST: Crear un slice
 # ----------------------------------------------------
@@ -269,6 +269,7 @@ async def create_slice(
 class DeployRequest(BaseModel):
     platform: str = "linux"
 
+
 @app.post("/slices/deploy/{slice_id}")
 async def validate_deploy_slice(
         slice_id: int,
@@ -330,6 +331,7 @@ async def validate_deploy_slice(
             detail=f"Error al desplegar slice: {str(e)}"
         )
 
+
 # =====================================================================
 # UPDATE /slices/{slice_id}  → modificar slice
 # =====================================================================
@@ -337,10 +339,10 @@ async def validate_deploy_slice(
 
 @app.post("/slices/update/{slice_id}")
 async def update_slice(
-    slice_id: int,
-    request: Request,
-    payload: dict = Depends(verify_token),
-    db: Session = Depends(get_db)
+        slice_id: int,
+        request: Request,
+        payload: dict = Depends(verify_token),
+        db: Session = Depends(get_db)
 ):
     """
     Modifica un slice con sus VMs asociadas para el usuario autenticado.
@@ -446,7 +448,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
     - Registra logs del proceso.
     """
     try:
-        
+
         result = delete_slice_resources(slice_id, db)
 
         return {

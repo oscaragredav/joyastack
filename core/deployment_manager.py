@@ -301,7 +301,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
 
         # Preparar lista limpia de VMs para procesos internos (OpenStack)
         vms_to_deploy_data = []
-        for vm in vms_db:
+        for vm in vms:
             image = db.execute(text("SELECT path FROM image WHERE id = :iid"), {"iid": vm["image_id"]}).mappings().first()
             vms_to_deploy_data.append({
                 "id": vm["id"], 
