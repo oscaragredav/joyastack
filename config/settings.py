@@ -27,3 +27,18 @@ SSH_USER = "ubuntu"
 GATEWAY = "10.20.12.154"
 SSH_PASS = "RedesCloud2025"
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "/home/ubuntu/.ssh/id_rsa")
+
+# --- OPENSTACK CONFIGURATION (R3) ---
+OPENSTACK_CONFIG = {
+    "auth_url": os.getenv("OPENSTACK_AUTH_URL", "http://192.168.201.11:5000/v3"),
+    "project_name": os.getenv("OPENSTACK_PROJECT_NAME", "admin"),
+    "username": os.getenv("OPENSTACK_USERNAME", "admin"),
+    "password": os.getenv("OPENSTACK_PASSWORD", "secret"),
+    "user_domain_name": os.getenv("OPENSTACK_USER_DOMAIN_NAME", "Default"),
+    "project_domain_name": os.getenv("OPENSTACK_PROJECT_DOMAIN_NAME", "Default"),
+    "external_network": os.getenv("OPENSTACK_EXTERNAL_NETWORK", "external"),
+    # NUEVO: Nombre de la interfaz física para VLANs (R5)
+    # Suele ser 'physnet1', 'default', 'public' o 'provider'. 
+    # En entornos de lab con una sola interfaz, suele coincidir con la external.
+    "physical_network": os.getenv("OPENSTACK_PROVIDER_PHYSICAL_NETWORK", "physnet1") 
+}
