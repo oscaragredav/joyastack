@@ -351,11 +351,24 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
 
                 # Puertos de Topología L2 (Enlaces internos)
                 for i, link in enumerate(links_db):
-                    l2_net_id = os_driver.create_l2_network(project_id, f"L2_{link['source_vm_id']}_{link['target_vm_id']}")
-                    if link['source_vm_id'] in vm_ports_map:
-                        vm_ports_map[link['source_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_src"))
-                    if link['target_vm_id'] in vm_ports_map:
-                        vm_ports_map[link['target_vm_id']].append(os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_dst"))
+                    # Usamos los nombres reales de tu tabla: vm_a (origen) y vm_b (destino)
+                    src_id = link['vm_a']
+                    dst_id = link['vm_b']
+
+                    if not src_id or not dst_id:
+                        print(f"[OpenStack] Ignorando enlace inválido: {link}")
+                        continue
+
+                    l2_net_id = os_driver.create_l2_network(project_id, f"L2_{src_id}_{dst_id}")
+                    # Crear puerto para VM A (Origen)
+                    if src_id in vm_ports_map:
+                        p_id = os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_src")
+                        vm_ports_map[src_id].append(p_id)
+                    
+                    # Crear puerto para VM B (Destino)
+                    if dst_id in vm_ports_map:
+                        p_id = os_driver.create_port(l2_net_id, project_id, name=f"link_{i}_dst")
+                        vm_ports_map[dst_id].append(p_id)
 
                 # c. Despliegue de Instancias
                 for vm in vms_to_deploy_data:
