@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from hashlib import sha256
 import os
 
-from config.settings import WORKER_IPS, GATEWAY, SSH_USER, SSH_PASS
+from config.settings import WORKER_IPS, GATEWAY, SSH_USER, SSH_PASS, WORKERS
 from utils.database import get_db
 from utils.ssh import SSHConnection
 from sqlalchemy import text
@@ -458,7 +458,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
         for vm in vms:
             wip = vm["worker_ip"]
             ssh_port = None
-            for name, data in WORKER_IPS.items():
+            for name, data in WORKERS.items():
                 if data["ip"] == wip:
                     ssh_port = data["ssh_port"]
                     break
