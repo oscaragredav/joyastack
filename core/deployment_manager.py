@@ -512,7 +512,7 @@ def delete_slice_resources(slice_id: int, db: Session):
                 if not ssh_port:
                     continue
 
-                conn = SSHConnection(GATEWAY, ssh_port, SSH_USER, SSH_PASS)
+                conn = SSHConnection(host=GATEWAY, user=SSH_USER, password=SSH_PASS, port=ssh_port)
                 if conn.connect():
                     try:
                         # Matar proceso QEMU si existiese
