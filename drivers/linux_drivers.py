@@ -191,7 +191,7 @@ def delete_vm_resources(vm, wip: str, worker_port: int, slice_id=None) -> bool:
 
     # Si la conexión se establece:
     try:
-        vm_name = vm['name']
+        vm_name = vm['name'].split('-')[0]
         print(f"[SliceManager] Eliminando VM {vm_name} en worker {wip}")
 
         # --- 2. Matar proceso QEMU ---
