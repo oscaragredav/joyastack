@@ -484,10 +484,12 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
 
         # Borrar en la base de datos (orden correcto debido a FKs)
         print(f"Eliminando registros de slice {slice_id} en BD")
+        log_entry(db, "SliceManager", "INFO",
+                  f"Eliminando registros de slice {slice_id} en BD", slice_id)
+
         db.execute(text("DELETE FROM network_link WHERE slice_id = :sid"), {"sid": slice_id})
         db.execute(text("DELETE FROM vm WHERE slice_id = :sid"), {"sid": slice_id})
-        db.execute(text("DELETE FROM logs WHERE module in ('WorkManager','SliceManager') AND message LIKE :sid_match"),
-                   {"sid_match": f"%{slice_id}%"})
+        db.execute(text("DELETE FROM logs WHERE slice_id = :sid"), {"sid": slice_id})
         db.execute(text("DELETE FROM slice WHERE id = :sid"), {"sid": slice_id})
         db.commit()
 
