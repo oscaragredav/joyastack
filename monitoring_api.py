@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 import httpx  # Necesitas instalarlo: pip install httpx
 from sshtunnel import SSHTunnelForwarder
 import time
 import asyncio
 import logging
 from typing import Union  # Importación necesaria para Python < 3.10
+from sqlalchemy.orm import Session
+from utils.database import get_db
+from utils.logger import log_entry
 
 # Configuración de logs para un mejor debug
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -67,7 +70,7 @@ def shutdown_event():
     logger.info("Resources closed.")
 
 
-async def get_metric(query: str, inst: str):
+async def get_metric(query: str, inst: str, db: Session = None):
     """Ejecuta una consulta PromQL y retorna el valor numérico. Usa httpx."""
     if not http_client:
         logger.error("HTTP client not initialized.")
@@ -83,17 +86,21 @@ async def get_metric(query: str, inst: str):
             # El resultado es un vector de tupla [timestamp, value]
             value = float(data['data']['result'][0]['value'][1])
             logger.debug(f"[{inst}] Query OK. Value: {value}")
+            if db: log_entry(db, "MonitoringAPI", "DEBUG", f"Metric value: {value}", None)
             return value
     except httpx.HTTPStatusError as e:
         logger.error(f"[{inst}] Prometheus API returned error: {e}")
+        if db: log_entry(db, "MonitoringAPI", "ERROR", f"Prometheus API error: {e}", None)
     except httpx.ConnectTimeout as e:
         logger.error(f"[{inst}] Connection to Prometheus timed out: {e}")
+        if db: log_entry(db, "MonitoringAPI", "ERROR", f"Prometheus timeout: {e}", None)
     except Exception as e:
         logger.error(f"[{inst}] General error getting metric: {e}")
+        if db: log_entry(db, "MonitoringAPI", "ERROR", f"Error getting metric: {e}", None)
     return None
 
 
-async def get_active_instances():
+async def get_active_instances(db: Session = None):
     """Obtiene las instancias activas de node_exporter registradas en Prometheus."""
     if not http_client:
         return []
@@ -110,13 +117,15 @@ async def get_active_instances():
                 instances.append(target['labels']['instance'])
 
         logger.info(f"Active instances found: {instances}")
+        if db: log_entry(db, "MonitoringAPI", "INFO", f"Active instances: {instances}", None)
         return instances
     except Exception as e:
         logger.error(f"Error obteniendo instancias activas: {e}")
+        if db: log_entry(db, "MonitoringAPI", "ERROR", f"Error getting active instances: {e}", None)
         return []
 
 
-async def get_host_metrics(inst: str):
+async def get_host_metrics(inst: str, db: Session = None):
     """
     Obtiene las métricas de capacidad total de un host de forma concurrente.
     Retorna RAM en MB y Storage en GB.
@@ -138,7 +147,7 @@ async def get_host_metrics(inst: str):
     }
 
     # Ejecutamos todas las promesas de métricas de forma concurrente
-    tasks = [get_metric(q, inst) for q in queries.values()]
+    tasks = [get_metric(q, inst, db) for q in queries.values()]
 
     # results contendrá los valores de las métricas en el mismo orden que las queries
     results = await asyncio.gather(*tasks)
@@ -176,18 +185,18 @@ async def get_host_metrics(inst: str):
     }
 
 
-async def get_hosts_from_prometheus():
+async def get_hosts_from_prometheus(db: Session = None):
     """Función principal para obtener hosts de forma concurrente."""
 
     # 1. Obtener instancias activas (asíncrono)
-    instances = await get_active_instances()
+    instances = await get_active_instances(db)
 
     if not instances:
         logger.warning("No active instances found in Prometheus.")
         return []
 
     # 2. Crear una tarea de obtención de métricas por cada instancia
-    tasks = [get_host_metrics(inst) for inst in instances]
+    tasks = [get_host_metrics(inst, db) for inst in instances]
 
     # 3. Ejecutar todas las tareas de forma concurrente
     hosts = await asyncio.gather(*tasks)
@@ -196,10 +205,10 @@ async def get_hosts_from_prometheus():
 
 
 @app.get("/hosts")
-async def get_hosts():
+async def get_hosts(db: Session = Depends(get_db)):
     """Endpoint asíncrono que devuelve el estado actual de los hosts detectados."""
     try:
-        hosts_data = await get_hosts_from_prometheus()
+        hosts_data = await get_hosts_from_prometheus(db)
         return {"hosts": hosts_data}
     except Exception as e:
         logger.error(f"Unhandled error in /hosts endpoint: {e}")

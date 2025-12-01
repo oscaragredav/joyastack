@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from config.settings import WORKERS
 from drivers.linux_drivers import create_vm_multi_vlan
+from utils.logger import log_entry
 
 
 def generate_unique_name(db, table_name: str, base_name: str) -> str:
@@ -57,6 +58,8 @@ def prepare_slice_and_vms(slice_id: int, db: Session):
     )
     db.commit()
     db.expunge_all()
+    print("[DeploymentManager] Nombres únicos generados para Slice y VMs.")
+    log_entry(db, "DeploymentManager", "INFO", "Unique names generated for Slice and VMs", slice_id)
 
     for vm in vms:
         new_vm_name = generate_unique_name(db, "vm", vm["name"])
@@ -69,17 +72,25 @@ def prepare_slice_and_vms(slice_id: int, db: Session):
     return slice_obj, vms
 
 
-def normalize_workers():
+def normalize_workers(slice_id: int, db):
     """Convierte el diccionario WORKERS a formato {id: data}."""
     workers_by_id = {}
     for key, data in WORKERS.items():
         worker_num = int(key.replace('worker', ''))
         workers_by_id[worker_num] = data
+
+    print(f"[DeploymentManager] Workers normalizados: {workers_by_id}")
+    log_entry(db, "DeploymentManager", "DEBUG", f"Workers normalized: {workers_by_id}", slice_id)
+
     return workers_by_id
 
 
-def get_placement_from_api(slice_id: int, vms: list, user_token: str):
+def get_placement_from_api(slice_id: int, vms: list, user_token: str, db):
     """Obtiene el placement óptimo desde el API de I-GA."""
+    print("[DeploymentManager] Solicitando placement óptimo al algoritmo I-GA...")
+    log_entry(db, "DeploymentManager", "INFO", "Requesting optimal placement from I-GA...", slice_id)
+
+
     try:
         vms_payload = []
         for vm in vms:
@@ -91,7 +102,9 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str):
                 "disk": vm["disk"]
             })
 
-        print(f"[PlacementAPI] Enviando {len(vms_payload)} VMs al algoritmo I-GA")
+        print(f"[DeploymentManager] Enviando {len(vms_payload)} VMs al algoritmo I-GA")
+        print(f"[DeploymentManager] Payload: {vms_payload}")
+        log_entry(db, "DeploymentManager", "DEBUG", f"Sending payload with {len(vms_payload)} VMs", slice_id)
 
         response = requests.post(
             f"http://localhost:8002/placement/slice/{slice_id}",
@@ -106,17 +119,27 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str):
         if response.status_code == 200:
             data = response.json()
             print(f"[PlacementAPI] Placement exitoso - Fitness: {data.get('fitness_score')}")
+            log_entry(db, "PlacementAPI", "INFO",
+                      f"Placement obtained. Fitness: {data.get['fitness_score']}", slice_id)
+            print(f"[DeploymentManager] Respuesta del Placement API: {response.status_code}")
+            log_entry(db, "DeploymentManager", "DEBUG", f"Placement API response: {response.status_code}", slice_id)
+
             return data
         else:
             print(f"[PlacementAPI] Error {response.status_code}")
+            print("  Usando asignación round-robin como fallback")
+            log_entry(db, "PlacementAPI", "WARNING",
+                      f"Placement API returned {response.status_code}. Usando round-robin.", slice_id)
             return None
 
     except requests.exceptions.RequestException as e:
         print(f"[PlacementAPI] No disponible: {e}")
+        log_entry(db, "PlacementAPI", "WARNING", f"Could not connect to Placement API: {e}. Using round-robin.",
+                  slice_id)
         return None
 
 
-def map_placements_to_workers(placement_data, workers_by_id):
+def map_placements_to_workers(placement_data, workers_by_id, slice_id, db):
     """Mapea las VMs a workers según el resultado del placement."""
     vm_to_worker = {}
 
@@ -164,6 +187,7 @@ def map_placements_to_workers(placement_data, workers_by_id):
         for vm_name in host_placement.get("assigned_vms", []):
             vm_to_worker[vm_name] = worker_id
             print(f"[Placement] VM '{vm_name}' -> Worker {worker_id}")
+            log_entry(db, "Placement", "INFO", f"VM '{vm_name}' => Worker {worker_id}", slice_id)
 
     return vm_to_worker
 
@@ -247,27 +271,32 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             return {"message": "No hay VMs pendientes.", "results": []}
 
         # Paso 2: Normalizar workers
-        workers_by_id = normalize_workers()
+        workers_by_id = normalize_workers(slice_id, db)
         print(f"[DeploymentManager] Workers disponibles: {list(workers_by_id.keys())}")
 
         # Paso 3: Obtener placement del algoritmo I-GA
-        placement_data = get_placement_from_api(slice_id, vms, user_token)
-        vm_to_worker = map_placements_to_workers(placement_data, workers_by_id)
+        placement_data = get_placement_from_api(slice_id, vms, user_token, db)
+        vm_to_worker = map_placements_to_workers(placement_data, workers_by_id, slice_id, db)
 
         # Paso 4: Desplegar VMs
         results = []
         for i, vm in enumerate(vms):
             # Determinar worker (algoritmo o round-robin)
+            print(f"\n[DeploymentManager] Desplegando VM: {vm['name']}")
+            log_entry(db, "DeploymentManager", "INFO", f"Deploying VM: {vm['name']}", slice_id)
+
             if vm["name"] in vm_to_worker:
                 worker_id = vm_to_worker[vm["name"]]
                 print(f"  ✓ Usando I-GA: Worker {worker_id}")
             else:
                 worker_id = (i % len(workers_by_id)) + 1
-                print(f"  ⚠ Usando round-robin: Worker {worker_id}")
+                print(f"  ⚠ Usando asignación round-robin: Worker {worker_id}")
+                log_entry(db, "DeploymentManager", "WARNING", f"Using round-robin: Worker {worker_id}", slice_id)
 
             # Validar worker
             if worker_id not in workers_by_id:
-                print(f"  ✗ Worker {worker_id} inválido, usando Worker 1")
+                print(f"  ✗ Worker {worker_id} no existe. Usando Worker 1 como fallback")
+                log_entry(db, "DeploymentManager", "ERROR", f"Worker {worker_id} does not exist. Using Worker 1.", slice_id)
                 worker_id = 1
 
             if worker_id not in workers_by_id:
@@ -277,6 +306,7 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
             config = get_vm_deployment_config(vm, slice_id, worker_id, workers_by_id, db)
             result = deploy_vm_to_worker(vm, worker_id, config, db)
             results.append(result)
+
 
         # Paso 5: Finalizar
         db.execute(
@@ -310,5 +340,6 @@ def deploy_slice(slice_id: int, db: Session, user_token: str):
 
     except Exception as e:
         print(f"[DeploymentManager] ERROR: {e}")
+        log_entry(db, "DeploymentManager", "ERROR", f"Deployment error: {e}", slice_id)
         db.rollback()
         raise e
