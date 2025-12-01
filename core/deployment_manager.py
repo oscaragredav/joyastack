@@ -306,9 +306,9 @@ def deploy_slice(slice_id: int, db: Session, user_token: str, platform: str = "l
             vms_to_deploy_data.append({
                 "id": vm["id"], 
                 "name": vm["name"], 
-                "cpu": vm["cpu_cores"],
-                "ram": vm["ram_gb"], 
-                "disk": vm["storage_gb"],
+                "cpu": vm["cpu"],
+                "ram": vm["ram"],
+                "disk": vm["disk"],
                 "image_ref": image["path"] if image else "cirros"
             })
 
