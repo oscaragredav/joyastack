@@ -99,6 +99,8 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db, platfo
     print("[DeploymentManager] Solicitando placement óptimo al algoritmo I-GA...")
     log_entry(db, "DeploymentManager", "INFO", "Requesting optimal placement from I-GA...", slice_id)
 
+    vm_map = {} # Iniciamos vacío por seguridad
+    data = None
 
     try:
         # === MODIFICACIÓN: URL DINÁMICA SEGÚN PLATAFORMA ===
@@ -155,13 +157,13 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db, platfo
             print("  Usando asignación round-robin como fallback")
             log_entry(db, "PlacementAPI", "WARNING",
                       f"Placement API returned {response.status_code}. Usando round-robin.", slice_id)
-            return {}, None
+            return data, vm_map
 
     except requests.exceptions.RequestException as e:
         print(f"[PlacementAPI] No disponible: {e}")
         log_entry(db, "PlacementAPI", "WARNING", f"Could not connect to Placement API: {e}. Using round-robin.",
                   slice_id)
-        return {}, None
+        return data, vm_map
 
 
 def map_placements_to_workers(placement_data, workers_by_id, slice_id, db):
