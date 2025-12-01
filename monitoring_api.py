@@ -53,8 +53,8 @@ def setup_tunnel(name: str, config: Dict[str, Any]):
             (config['host'], config['port']),
             ssh_username=SSH_USER,
             ssh_password=SSH_PASSWORD,
-            remote_bind_address=('10.20.12.32', REMOTE_PROM_PORT),
-            local_bind_address=('10.20.12.32', config['local_port'])
+            remote_bind_address=('127.0.0.1', REMOTE_PROM_PORT),
+            local_bind_address=('127.0.0.1', config['local_port'])
         )
         server.start()
         time.sleep(1)
