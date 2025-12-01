@@ -483,7 +483,7 @@ def delete_slice_resources(slice_id: int, db: Session):
             # Obtener VMs del slice
             vms = db.execute(
                 text("""
-                    SELECT v.id, v.cpu, v.ram, v.disk, w.ip as worker_ip, w.id as worker_id
+                    SELECT v.id, v.name, v.cpu, v.ram, v.disk, w.ip as worker_ip, w.id as worker_id
                     FROM vm v
                     JOIN worker w ON v.worker_id = w.id
                     WHERE v.slice_id = :sid
@@ -500,8 +500,10 @@ def delete_slice_resources(slice_id: int, db: Session):
                 wip = vm["worker_ip"]
                 ssh_port = None
                 for name, data in WORKERS.items():
+                    print(f"[SliceManager] Comprobando worker {name} ({data['ip']})")
                     if data["ip"] == wip:
                         ssh_port = data["ssh_port"]
+                        print(f"[SliceManager] Conectando a worker {name} ({wip}:{ssh_port}) para eliminar VM")
                         break
                 if not ssh_port:
                     continue
@@ -510,11 +512,12 @@ def delete_slice_resources(slice_id: int, db: Session):
                 if conn.connect():
                     try:
                         # Matar proceso QEMU si existiese
-                        conn.exec_sudo(f"pkill -f 'qemu-system.*VM_Auto_' || true")
+                        print(f"[SliceManager] Eliminando VM {vm['name']} en worker {wip}")
+                        conn.exec_sudo(f"pkill -f 'qemu-system.*{vm["name"]}' || true")
                         conn.exec_sudo(f"sleep 1")
                         # Limpiar TAPs y OvS
                         conn.exec_sudo(
-                            f"ovs-vsctl list-ports br-int | grep VM_Auto_ | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
+                            f"ovs-vsctl list-ports br-int | grep {vm["name"]} | xargs -r -I{{}} ovs-vsctl del-port br-int {{}}")
                         conn.exec_sudo(f"ip link del $(ip link show | grep VM_Auto_ | cut -d: -f2) 2>/dev/null || true")
                         log_entry(db, "SliceManager", "INFO", f"Limpieza de VM en worker {wip} completada")
                     except Exception as e:
