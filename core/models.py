@@ -8,6 +8,7 @@ class Slice(Base):
     name = Column(String(100), nullable=False)
     owner_id = Column(Integer, ForeignKey("user.id"), nullable=False)
     status = Column(String(20), nullable=False, default="PENDIENTE")
+    platform = Column(String(50), default="linux")
     created_at = Column(DateTime, server_default=func.now())
 
 class VM(Base):
