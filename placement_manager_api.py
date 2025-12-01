@@ -49,19 +49,34 @@ async def log_requests(request: Request, call_next):
 # Función auxiliar para obtener hosts
 # -----------------------------
 def get_hosts():
-    """Obtiene la lista de hosts disponibles desde la API de recursos"""
+    """
+    Obtiene la lista de hosts disponibles desde la API de recursos (8003)
+    y normaliza las unidades: RAM en MB, Storage en GB.
+    """
     try:
-        resp = requests.get("http://localhost:8003/hosts", timeout=5)
+        resp = requests.get("http://localhost:8003/hosts", timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
-        if isinstance(data, dict) and "hosts" in data:
-            hosts = data["hosts"]
-        else:
-            hosts = data
+        hosts_data = data["hosts"] if isinstance(data, dict) and "hosts" in data else data
 
-        logger.info(f"✓ Obtenidos {len(hosts)} hosts desde API de recursos")
-        return hosts
+        # NORMALIZACIÓN DE UNIDADES Y CLAVES
+        normalized_hosts = []
+        for h in hosts_data:
+            # Mapeamos a claves simples (cpu, ram, storage)
+            normalized_hosts.append({
+                "id": h["id"],
+                "ip": h["ip"],
+                "cpu": h.get("cpu_total", 0),
+                "ram": h.get("ram_total_mb", 0),  # ¡Ahora en MB!
+                "storage": h.get("storage_total_gb", 0),  # ¡Ahora en GB!
+                "availability": h.get("availability", 1.0),
+                "power_idle": h.get("power_idle", 100),
+                "power_max": h.get("power_max", 250),
+            })
+
+        logger.info(f"✓ Obtenidos {len(normalized_hosts)} hosts desde API de recursos (RAM en MB, Storage en GB)")
+        return normalized_hosts
     except Exception as e:
         logger.error(f"✗ Error obteniendo hosts: {e}")
         return []
@@ -79,6 +94,84 @@ POP_SIZE = 50
 GENERATIONS = 100
 ELITE_SIZE = 5
 MUTATION_RATE = 0.2
+
+
+# -----------------------------
+# VALIDACIÓN DE RECURSOS
+# -----------------------------
+class ResourceValidationError(Exception):
+    """Excepción personalizada para errores de validación de recursos"""
+    pass
+
+
+def validate_resources(vms, hosts):
+    """
+    Valida que las VMs puedan ser asignadas a los hosts disponibles.
+    (Unidades RAM: MB, Storage: GB)
+    """
+    # Calcular recursos totales requeridos
+    total_cpu_required = sum(vm["cpu"] for vm in vms)
+    total_ram_required = sum(vm["ram"] for vm in vms)
+    total_storage_required = sum(vm["storage"] for vm in vms)
+
+    # Calcular recursos totales disponibles (con overcommit)
+    total_cpu_available = sum(h["cpu"] * CPU_OVER for h in hosts)
+    total_ram_available = sum(h["ram"] * RAM_OVER for h in hosts)
+    total_storage_available = sum(h["storage"] * STORAGE_OVER for h in hosts)
+
+    # Validar CPU
+    if total_cpu_required > total_cpu_available:
+        cpu_usage = (total_cpu_required / total_cpu_available) * 100
+        raise ResourceValidationError(
+            f"CPU insuficiente: Se requiere {total_cpu_required} vCPUs pero solo hay "
+            f"{total_cpu_available:.2f} disponibles (uso: {cpu_usage:.1f}%)"
+        )
+
+    # Validar RAM (Unidad: MB)
+    if total_ram_required > total_ram_available:
+        ram_usage = (total_ram_required / total_ram_available) * 100
+        raise ResourceValidationError(
+            f"RAM insuficiente: Se requiere {total_ram_required} MB pero solo hay "
+            f"{total_ram_available:.2f} MB disponibles (uso: {ram_usage:.1f}%)"
+        )
+
+    # Validar Storage (Unidad: GB)
+    if total_storage_required > total_storage_available:
+        storage_usage = (total_storage_required / total_storage_available) * 100
+        raise ResourceValidationError(
+            f"Almacenamiento insuficiente: Se requiere {total_storage_required} GB pero solo hay "
+            f"{total_storage_available:.2f} GB disponibles (uso: {storage_usage:.1f}%)"
+        )
+
+    # Calcular porcentajes de uso
+    cpu_percent = (total_cpu_required / total_cpu_available) * 100
+    ram_percent = (total_ram_required / total_ram_available) * 100
+    storage_percent = (total_storage_required / total_storage_available) * 100
+
+    logger.info(f"✓ Validación de recursos aprobada:")
+    logger.info(f"  - CPU: {cpu_percent:.1f}% ({total_cpu_required}/{total_cpu_available:.2f} vCPUs)")
+    logger.info(f"  - RAM: {ram_percent:.1f}% ({total_ram_required}/{total_ram_available:.2f} MB)")
+    logger.info(f"  - Storage: {storage_percent:.1f}% ({total_storage_required}/{total_storage_available:.2f} GB)")
+
+    return True
+
+
+def validate_single_vm_fits(vm, hosts):
+    """
+    Valida que al menos exista un host que pueda alojar la VM individualmente.
+    (Unidades RAM: MB, Storage: GB)
+    """
+    for host in hosts:
+        if (vm["cpu"] <= host["cpu"] * CPU_OVER and
+                vm["ram"] <= host["ram"] * RAM_OVER and
+                vm["storage"] <= host["storage"] * STORAGE_OVER):
+            return True
+
+    # Mensaje de error corregido para usar MB y GB
+    raise ResourceValidationError(
+        f"La VM '{vm['id']}' es demasiado grande: requiere {vm['cpu']} vCPUs, "
+        f"{vm['ram']} MB RAM, {vm['storage']} GB storage. Ningún host individual puede alojarla."
+    )
 
 
 # -----------------------------
@@ -213,6 +306,7 @@ def build_placement_result(best_chromosome, vms, hosts):
 
     usage_summary = []
     for h in hosts:
+        # Nota: La ratio de uso aquí se calcula sobre la capacidad virtualizada.
         cpu_ratio = used[h["id"]]["cpu"] / h["cpu_virtual"]
         energy = energy_consumption(cpu_ratio, h) if cpu_ratio > 0 else 0
         usage_summary.append({
@@ -242,11 +336,12 @@ def build_placement_result(best_chromosome, vms, hosts):
 @app.get("/placement")
 def get_vm_placement():
     """Endpoint original con VMs hardcodeadas (para testing)"""
+    # VMs ajustadas: RAM en MB (1GB = 1024MB), Storage en GB
     vms = [
-        {"id": "vm1", "cpu": 4, "ram": 8, "storage": 100},
-        {"id": "vm2", "cpu": 6, "ram": 12, "storage": 80},
-        {"id": "vm3", "cpu": 8, "ram": 16, "storage": 200},
-        {"id": "vm4", "cpu": 3, "ram": 4, "storage": 50}
+        {"id": "vm1", "cpu": 4, "ram": 8192, "storage": 100},  # 8 GB RAM
+        {"id": "vm2", "cpu": 6, "ram": 12288, "storage": 80},  # 12 GB RAM
+        {"id": "vm3", "cpu": 8, "ram": 16384, "storage": 200},  # 16 GB RAM
+        {"id": "vm4", "cpu": 3, "ram": 4096, "storage": 50}  # 4 GB RAM
     ]
     hosts = get_hosts()
 
@@ -254,6 +349,18 @@ def get_vm_placement():
         raise HTTPException(status_code=503, detail="No hay hosts disponibles")
 
     hosts = preprocess_hosts(hosts)
+
+    try:
+        # Validar que cada VM pueda caber en al menos un host
+        for vm in vms:
+            validate_single_vm_fits(vm, hosts)
+
+        # Validar recursos totales
+        validate_resources(vms, hosts)
+
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     best = run_genetic_algorithm(vms, hosts)
     return build_placement_result(best, vms, hosts)
 
@@ -296,8 +403,8 @@ async def get_slice_placement(
                     "id": vm.get("name") or f"vm_{vm['id']}",
                     "vm_id": vm["id"],
                     "cpu": vm.get("cpu", 1),
-                    "ram": vm.get("ram", 256),
-                    "storage": vm.get("disk", 3)
+                    "ram": vm.get("ram", 1024),  # Default 1024 MB (1GB)
+                    "storage": vm.get("disk", 3)  # Default 3 GB
                 })
 
             logger.info(f"✓ VMs procesadas desde body: {[v['id'] for v in vms]}")
@@ -344,8 +451,8 @@ async def get_slice_placement(
                         "id": vm.get("name") or f"vm_{vm['id']}",
                         "vm_id": vm["id"],
                         "cpu": vm.get("cpu", 1),
-                        "ram": vm.get("ram", 256),
-                        "storage": vm.get("disk", 3)
+                        "ram": vm.get("ram", 1024),  # Default 1024 MB (1GB)
+                        "storage": vm.get("disk", 3)  # Default 3 GB
                     })
 
             except requests.exceptions.Timeout:
@@ -360,7 +467,7 @@ async def get_slice_placement(
                 )
 
         # ============================================
-        # PASO 3: OBTENER HOSTS Y EJECUTAR I-GA
+        # PASO 3: OBTENER HOSTS Y VALIDAR RECURSOS
         # ============================================
 
         hosts = get_hosts()
@@ -373,13 +480,34 @@ async def get_slice_placement(
         hosts = preprocess_hosts(hosts)
         logger.info(f"✓ Hosts preprocesados: {len(hosts)}")
 
+        # ============================================
+        # VALIDACIÓN CRÍTICA DE RECURSOS
+        # ============================================
+        try:
+            # Validar que cada VM pueda caber en al menos un host
+            for vm in vms:
+                validate_single_vm_fits(vm, hosts)
+
+            # Validar recursos totales
+            validate_resources(vms, hosts)
+
+        except ResourceValidationError as e:
+            logger.error(f"❌ Validación de recursos falló: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Recursos insuficientes para el slice {slice_id}: {str(e)}"
+            )
+
+        # ============================================
+        # PASO 4: EJECUTAR I-GA
+        # ============================================
         logger.info(f"🧬 Ejecutando algoritmo I-GA con {len(vms)} VMs...")
         best = run_genetic_algorithm(vms, hosts)
 
         result = build_placement_result(best, vms, hosts)
 
         # ============================================
-        # PASO 4: ENRIQUECER RESULTADO
+        # PASO 5: ENRIQUECER RESULTADO
         # ============================================
 
         result["slice_id"] = slice_id
@@ -418,11 +546,12 @@ def get_custom_placement(request: Dict):
     if not vms:
         raise HTTPException(status_code=400, detail="Debe proporcionar al menos una VM")
 
+    # Validación estricta para el endpoint custom, asumiendo que el usuario ya usa MB/GB
     for vm in vms:
         if "id" not in vm or "cpu" not in vm or "ram" not in vm or "storage" not in vm:
             raise HTTPException(
                 status_code=400,
-                detail="Cada VM debe tener: id, cpu, ram, storage"
+                detail="Cada VM debe tener: id, cpu (vCPUs), ram (MB), storage (GB)"
             )
 
     hosts = get_hosts()
@@ -430,6 +559,18 @@ def get_custom_placement(request: Dict):
         raise HTTPException(status_code=503, detail="No hay hosts disponibles")
 
     hosts = preprocess_hosts(hosts)
+
+    try:
+        # Validar que cada VM pueda caber en al menos un host
+        for vm in vms:
+            validate_single_vm_fits(vm, hosts)
+
+        # Validar recursos totales
+        validate_resources(vms, hosts)
+
+    except ResourceValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     best = run_genetic_algorithm(vms, hosts)
 
     return build_placement_result(best, vms, hosts)

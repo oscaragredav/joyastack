@@ -11,11 +11,13 @@
 #  $6 = RAM MB
 #  $7 = Disco GB
 #  $8 = NUM_IFACES
+#  $9 = IMAGE_PATH  <-- El noveno parámetro que se espera
 # ------------------------------------------------------------
 
 set -euo pipefail
 
 # --- Fix CRLF ---
+# Manejo de terminaciones de línea: mantenido por seguridad.
 if grep -q $'\r' "$0" 2>/dev/null; then
   sed -i 's/\r$//' "$0"
   exec /usr/bin/env bash "$0" "$@"
@@ -24,7 +26,8 @@ fi
 log() { echo "[$(date +'%H:%M:%S')] $*"; }
 error_exit() { log "ERROR: $*"; exit 1; }
 
-if [ $# -ne 8 ]; then
+# CORRECCIÓN: Se esperan 9 argumentos.
+if [ $# -ne 9 ]; then
   error_exit "Uso: $0 <NombreVM> <OvS> <VLAN> <VNC_PORT> <CPUs> <RAM_MB> <DISK_GB> <NUM_IFACES> <IMAGE_PATH>"
 fi
 
@@ -36,12 +39,13 @@ CPUS=$5
 RAM=$6
 DISK=$7
 NUM_IFACES=$8
-IMAGE_PATH=$9
+IMAGE_PATH=$9 # Asignación del 9º parámetro correcta
 
 IMAGE_DIR="/home/ubuntu/images"
 BASE_IMAGE="$IMAGE_PATH"
 VM_IMG="/home/ubuntu/joyastack/var/vms/${VM_NAME}.qcow2"
 TAP_INTERFACE="tap-${VM_NAME}"
+# Genera una MAC address consistente
 MAC_ADDRESS="52:54:00:$(openssl rand -hex 3 | sed 's/\(..\)/\1:/g; s/:$//')"
 
 log "=== Creando VM: $VM_NAME ==="
@@ -60,9 +64,11 @@ ip link delete "$TAP_INTERFACE" 2>/dev/null || true
 
 # --- Crear imagen overlay ---
 mkdir -p "$(dirname "$VM_IMG")"
+log "Creando overlay image en $VM_IMG a partir de $BASE_IMAGE"
 qemu-img create -f qcow2 -b "$BASE_IMAGE" "$VM_IMG" "${DISK}G"
 
 # --- Crear y conectar interfaz TAP ---
+log "Creando y conectando interfaz TAP $TAP_INTERFACE con VLAN $VLAN_ID"
 ip tuntap add dev "$TAP_INTERFACE" mode tap
 ip link set "$TAP_INTERFACE" up
 ovs-vsctl add-port "$OVS_NAME" "$TAP_INTERFACE" tag="$VLAN_ID"
@@ -72,6 +78,7 @@ KVM_FLAG=""
 [ -e /dev/kvm ] && KVM_FLAG="-enable-kvm"
 
 # --- Ejecutar QEMU ---
+log "Iniciando QEMU con $CPUS CPUs y ${RAM}MB RAM (VNC:$VNC_PORT)"
 qemu-system-x86_64 \
   $KVM_FLAG \
   -name "$VM_NAME" \
@@ -85,10 +92,11 @@ qemu-system-x86_64 \
 
 sleep 2
 PID=$(pgrep -f "qemu-system-x86_64.*-name $VM_NAME" || true)
-[ -z "$PID" ] && error_exit "No se pudo iniciar la VM."
+[ -z "$PID" ] && error_exit "No se pudo iniciar la VM. Revisar logs de QEMU."
 
 # --- Guardar info ---
 INFO_FILE="/home/ubuntu/joyastack/var/vms/${VM_NAME}_info.txt"
+log "Guardando metadata en $INFO_FILE"
 cat > "$INFO_FILE" <<EOF
 VM_NAME=$VM_NAME
 PID=$PID
