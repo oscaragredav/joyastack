@@ -175,7 +175,7 @@ def create_vm_multi_vlan(worker_port: int, vm_name: str, bridge: str, vlans: lis
         conn.close()
 
 
-def delete_vm_resources(db, vm, wip: str, ssh_port: int, slice_id=None) -> bool:
+def delete_vm_resources(vm, wip: str, worker_port: int, slice_id=None) -> bool:
     """
     Detiene el proceso QEMU y elimina los puertos OvS y las interfaces TAP
     asociadas a una máquina virtual específica en el worker.
@@ -184,15 +184,10 @@ def delete_vm_resources(db, vm, wip: str, ssh_port: int, slice_id=None) -> bool:
         bool: True si la limpieza tuvo éxito, False en caso contrario.
     """
 
-    conn = SSHConnection(port=ssh_port)
-    print(f"[LinuxDriver] Conectado al worker {ssh_port}")
+    conn = SSHConnection(port=worker_port)
+    print(f"[LinuxDriver] Conectado al worker {worker_port}")
     conn.connect()
-    print(f"[LinuxDriver] Conexión establecida con el worker {ssh_port}")
-    print(f"[LinuxDriver] Conexión existente {conn.connect()}")
-
-    if not conn.connect():
-        print(f"[SliceManager] ERROR: No se pudo conectar al worker {wip} en el puerto {ssh_port}")
-        return False
+    print(f"[LinuxDriver] Conexión establecida con el worker {worker_port}")
 
     # Si la conexión se establece:
     try:
@@ -227,7 +222,7 @@ def delete_vm_resources(db, vm, wip: str, ssh_port: int, slice_id=None) -> bool:
 
     except Exception as e:
         print(f"Error limpiando recursos de VM: {e}")
-        print(f"[SliceManager] ERROR limpiando recursos de VM {vm_name} en worker {wip}")
+        print(f"[SliceManager] ERROR limpiando recursos de VM en worker {wip}")
         return False
 
     finally:

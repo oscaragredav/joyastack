@@ -512,7 +512,7 @@ def delete_slice_resources(slice_id: int, db: Session):
                 if not ssh_port:
                     continue
 
-                success = delete_vm_resources(db, vm, wip, ssh_port, slice_id)
+                success = delete_vm_resources(vm, wip, ssh_port, slice_id)
 
                 if success:
                     print(f"[SliceManager] Limpieza de {vm['name']} ejecutada correctamente.")
