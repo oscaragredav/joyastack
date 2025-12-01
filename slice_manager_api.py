@@ -453,7 +453,7 @@ def delete_slice(slice_id: int, token=Depends(verify_token), db: Session = Depen
         if not vms:
             return {"status": "not_found", "message": "No hay VMs en este slice"}
 
-        log_entry(db, "SliceManager", "INFO", f"Eliminando slice {slice_id} con {len(vms)} VMs")
+        log_entry(db, "SliceManager", "INFO", f"Eliminando slice {slice_id} con {len(vms)} VMs", slice_id)
 
         for vm in vms:
             wip = vm["worker_ip"]
