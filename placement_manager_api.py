@@ -55,7 +55,7 @@ def get_hosts():
     y normaliza las unidades, incluyendo campos de carga base (Prometheus).
     """
     try:
-        resp = requests.get("http://10.20.12.32:8003/hosts", timeout=30)
+        resp = requests.get("http://localhost:8003/hosts", timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
@@ -473,7 +473,7 @@ async def get_slice_placement(
 
             try:
                 resp = requests.get(
-                    f"http://10.20.12.32:8001/slices/{slice_id}",
+                    f"http://localhost:8001/slices/{slice_id}",
                     headers=headers,
                     timeout=10
                 )
@@ -639,7 +639,7 @@ def get_openstack_hosts():
     """
     try:
         # CAMBIO DE ENDPOINT: Se consulta al recurso de OpenStack
-        resp = requests.get("http://10.20.12.32:8003/hosts_openstacks", timeout=30)
+        resp = requests.get("http://localhost:8003/hosts_openstacks", timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
@@ -821,8 +821,8 @@ def health_check():
             "algorithm": "I-GA",
             "version": "1.0",
             "services": {
-                "resource_manager": "http://10.20.12.32:8003",
-                "slice_manager": "http://10.20.12.32:8001"
+                "resource_manager": "http://localhost:8003",
+                "slice_manager": "http://localhost:8001"
             }
         }
     except Exception as e:

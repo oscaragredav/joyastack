@@ -8,7 +8,7 @@ from utils.logger import log_entry
 from drivers.openstack_driver import OpenStackDriver
 from utils.ssh import SSHConnection
 
-PLACEMENT_API_BASE_URL = "http://10.20.12.32:8002/placement/slice"
+PLACEMENT_API_BASE_URL = "http://localhost:8002/placement/slice"
 
 def generate_unique_name(db, table_name: str, base_name: str) -> str:
     """
@@ -104,7 +104,7 @@ def get_placement_from_api(slice_id: int, vms: list, user_token: str, db, platfo
         # === MODIFICACIÓN: URL DINÁMICA SEGÚN PLATAFORMA ===
         if platform.lower() == 'openstack':
             # Endpoint específico para OpenStack
-            url = f"http://10.20.12.32:8002/placement/openstack/slice/{slice_id}"
+            url = f"http://localhost:8002/placement/openstack/slice/{slice_id}"
         else:
             # Endpoint original para Linux
             url = f"{PLACEMENT_API_BASE_URL}/{slice_id}"
@@ -188,7 +188,7 @@ def map_placements_to_workers(placement_data, workers_by_id, slice_id, db):
 
             if not ip:
                 try:
-                    hosts_list = requests.get("http://10.20.12.32:8003/hosts", timeout=60).json()
+                    hosts_list = requests.get("http://localhost:8003/hosts", timeout=60).json()
                     if isinstance(hosts_list, dict) and "hosts" in hosts_list:
                         hosts_list = hosts_list["hosts"]
                     for h in hosts_list:
